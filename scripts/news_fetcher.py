@@ -1,36 +1,52 @@
 """
-news_fetcher.py
+news_fetcher.py (v2 — 뉴스 밀도 개선판)
 
-Tavily Search API 기반 뉴스 수집 모듈.
+뉴스 수집 전용 모듈 (명세 28번 항목, 그리고 "뉴스 2건만 수집되는 문제" 개선 요청 반영).
+
+개선 핵심:
+- 기존에는 카테고리 구분 없이 단일 토픽 리스트(12개) 각각 1회 검색만 수행하여
+  최종 결과가 2건 수준으로 지나치게 적었다.
+- v2는 7개 대분류(저축은행/국내금융정책/경제/금리/환율/증시/국제) x
+  대분류별 다수의 세부 검색어로 "넓게" 검색한 뒤, 날짜 필터 → 출처 필터 →
+  중복 제거 → 우선순위 정렬을 거쳐 "충분한 후보(목표 20건 이상, 가능하면
+  30~50건)"를 AI에게 전달한다. 최종 6~10건 선정은 AI(generate_brief.py가
+  호출하는 프롬프트)가 담당한다 — 이 모듈은 "선정"이 아니라 "후보 확보"까지만
+  책임진다.
 
 역할:
-- Tavily 뉴스 검색
-- 날짜 필터 (전일 00:00~24:00, Asia/Seoul 기준)
-- 출처 우선순위 적용
-- 중복 제거
-- 제목/URL/날짜/출처/요약 정규화
+- 뉴스 검색 (Tavily Search API 기본 사용, 다른 검색 API로 교체 가능하도록 추상화)
+- 날짜 필터 (Asia/Seoul 기준 전일 00:00~23:59:59) — API 자체 날짜 필터(Tavily의
+  `days` 파라미터)와 파이썬 내부 날짜 필터를 모두 사용한다 (이중 검증).
+- 출처 우선순위 적용 (공식기관 > 주요 언론 > 기타)
+- 중복 제거 (URL 기준 1차, 정규화된 제목 기준 2차)
+- 제목/URL/날짜/출처 정규화
 
-GitHub 환경변수:
-- SEARCH_API_URL: https://api.tavily.com/search
-- SEARCH_API_KEY: Tavily API Key
+이 모듈은 AI 작성 로직(ai_client.py)을 알지 못한다. 카테고리 태그가 붙은
+정규화된 리스트(list[dict])를 반환하는 역할만 수행한다.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import time
-import urllib.error
+import re
 import urllib.request
-from datetime import date, datetime, timedelta
+import urllib.error
+import urllib.parse
+from datetime import datetime, timedelta
+from email.utils import parsedate_to_datetime
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 SEOUL_TZ = ZoneInfo("Asia/Seoul")
 
+# ---------------------------------------------------------------------------
+# 출처 우선순위 (명세 3번: 공식기관 > 주요 언론 > 보조 언론)
+# ---------------------------------------------------------------------------
+
 OFFICIAL_SOURCES = [
     "금융위원회", "금융감독원", "한국은행", "기획재정부", "통계청",
-    "BIS", "IMF", "OECD", "Federal Reserve", "ECB",
+    "BIS", "IMF", "OECD", "Federal Reserve", "연방준비제도", "ECB",
 ]
 
 MAJOR_PRESS_SOURCES = [
@@ -38,259 +54,365 @@ MAJOR_PRESS_SOURCES = [
     "조선비즈", "더벨", "연합인포맥스",
 ]
 
-SEARCH_TOPICS = [
-    "저축은행 PF",
-    "저축은행 연체율",
-    "저축은행 BIS 유동성",
-    "저축은행 감독 금융감독원",
-    "저축은행 M&A",
-    "저축은행 예금금리 대출금리",
-    "금융위원회 저축은행",
-    "한국은행 기준금리 금융시장",
-    "원달러 환율",
-    "국고채 금리 회사채 금리",
-    "코스피 은행주 금융주",
-    "가계부채 부동산 PF",
-]
+# 도메인 -> 표시용 출처명 매핑 (Tavily 등 검색 API가 언론사명을 직접 주지 않고
+# URL만 주는 경우를 대비한 보정용. 필요에 따라 계속 추가 가능).
+DOMAIN_SOURCE_MAP = {
+    "yna.co.kr": "연합뉴스",
+    "hankyung.com": "한국경제",
+    "mk.co.kr": "매일경제",
+    "sedaily.com": "서울경제",
+    "edaily.co.kr": "이데일리",
+    "chosun.com": "조선비즈",
+    "biz.chosun.com": "조선비즈",
+    "thebell.co.kr": "더벨",
+    "yonhapinfomax.co.kr": "연합인포맥스",
+    "fsc.go.kr": "금융위원회",
+    "fss.or.kr": "금융감독원",
+    "bok.or.kr": "한국은행",
+    "moef.go.kr": "기획재정부",
+    "kostat.go.kr": "통계청",
+    "bis.org": "BIS",
+    "imf.org": "IMF",
+    "oecd.org": "OECD",
+    "federalreserve.gov": "Federal Reserve",
+    "ecb.europa.eu": "ECB",
+}
+
+# ---------------------------------------------------------------------------
+# 카테고리별 검색어 (명세 2번 A~G 그대로 반영, D/E는 "금리"/"환율"로 분리 유지)
+# ---------------------------------------------------------------------------
+
+CATEGORY_QUERIES: dict[str, list[str]] = {
+    "저축은행": [
+        "저축은행", "저축은행 PF", "저축은행 브릿지론", "저축은행 토담대",
+        "저축은행 연체율", "저축은행 고정이하여신", "저축은행 BIS",
+        "저축은행 유동성", "저축은행 예금금리", "저축은행 대출금리",
+        "저축은행 NPL", "저축은행 M&A", "저축은행 검사", "저축은행 제재",
+    ],
+    "국내금융정책": [
+        "금융위원회", "금융감독원", "한국은행", "기획재정부",
+        "금융정책", "금융규제", "가계대출", "부동산 PF",
+    ],
+    "경제": [
+        "CPI", "PPI", "GDP", "고용", "소비", "수출입", "경기", "부동산",
+    ],
+    "금리": [
+        "한국 기준금리", "미국 기준금리", "Fed", "국고채", "회사채",
+        "금융채", "시장금리",
+    ],
+    "환율": [
+        "원달러", "원엔", "원위안", "달러인덱스",
+    ],
+    "증시": [
+        "코스피", "코스닥", "미국 증시", "금융주", "은행주",
+        "외국인 수급", "기관 수급",
+    ],
+    "국제": [
+        "미국 경제", "중국 경제", "일본 경제", "유럽 경제",
+        "중동", "지정학", "글로벌 금융시장",
+    ],
+}
+
+# "주요 뉴스 브리핑"의 6개 하위 카테고리와 위 CATEGORY_QUERIES 키의 매핑.
+# (프롬프트 구성 단계 - generate_brief.py에서 이 매핑을 사용해 후보를 정리한다.)
+CATEGORY_TO_REPORT_SECTION = {
+    "저축은행": "저축은행 핵심 이슈",
+    "국내금융정책": "국내 금융정책",
+    "경제": "경제",
+    "금리": "금리·환율",
+    "환율": "금리·환율",
+    "증시": "증시",
+    "국제": "국제",
+}
+
+CATEGORY_PRIORITY_ORDER = ["저축은행", "국내금융정책", "경제", "금리", "환율", "증시", "국제"]
+
+# 각 검색어당 요청할 결과 수, 카테고리별 최대 후보 캡(토큰 낭비 방지 + 노이즈 억제).
+RESULTS_PER_QUERY = 6
+MAX_CANDIDATES_PER_CATEGORY = 15
+TARGET_MIN_CANDIDATES = 20
+TARGET_GOOD_CANDIDATES = 30
+
+DEFAULT_TAVILY_URL = "https://api.tavily.com/search"
 
 
 class NewsFetchError(RuntimeError):
     """뉴스 수집 실패를 나타내는 예외."""
 
 
+# ---------------------------------------------------------------------------
+# 정규화 / 우선순위 유틸
+# ---------------------------------------------------------------------------
+
 def _source_priority(source_name: str) -> int:
-    if any(name.lower() in source_name.lower() for name in OFFICIAL_SOURCES):
+    """숫자가 낮을수록 우선순위가 높다."""
+    if any(name in source_name for name in OFFICIAL_SOURCES):
         return 0
-    if any(name.lower() in source_name.lower() for name in MAJOR_PRESS_SOURCES):
+    if any(name in source_name for name in MAJOR_PRESS_SOURCES):
         return 1
     return 2
 
 
-def _source_from_url(url: str) -> str:
-    """Tavily 결과에 별도 source 필드가 없으므로 URL 도메인을 출처로 사용한다."""
+def _guess_source_from_url(url: str) -> str | None:
     try:
-        host = urlparse(url).netloc.lower()
-        if host.startswith("www."):
-            host = host[4:]
-        return host or "출처 미상"
-    except Exception:
-        return "출처 미상"
+        domain = urlparse(url).netloc.lower()
+    except ValueError:
+        return None
+    domain = domain[4:] if domain.startswith("www.") else domain
+    for known_domain, name in DOMAIN_SOURCE_MAP.items():
+        if domain == known_domain or domain.endswith("." + known_domain):
+            return name
+    return None
 
 
-def _normalize_published_at(value: str) -> str:
-    """Tavily published_date를 기존 파이프라인이 이해할 ISO 문자열로 정규화."""
-    if not value:
-        return ""
+def _normalize_title_key(title: str) -> str:
+    """중복 제거용 제목 정규화: 공백/기호 제거 + 소문자화."""
+    return re.sub(r"[\s\W]+", "", title).lower()
 
-    text = str(value).strip()
 
-    # 날짜만 제공되는 경우 한국시간 자정으로 취급한다.
-    if len(text) == 10:
+def _parse_published_at(raw: str) -> datetime | None:
+    """
+    다양한 날짜 포맷을 timezone-aware datetime으로 파싱한다.
+    파싱 실패 시 None을 반환한다 (naive datetime을 만들어내지 않는다 - 명세 24번).
+    날짜를 확인할 수 없는 기사는 상위 로직에서 제외 처리된다.
+    """
+    if not raw:
+        return None
+    raw = raw.strip()
+
+    # 1) ISO 8601 (예: 2026-08-11T09:00:00+09:00, 2026-08-11T09:00:00Z)
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if dt.tzinfo is not None:
+            return dt
+    except ValueError:
+        pass
+
+    # 2) 날짜만 있는 경우 (예: 2026-08-11) -> Asia/Seoul 자정으로 간주.
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
         try:
-            datetime.strptime(text, "%Y-%m-%d")
-            return f"{text}T00:00:00+09:00"
+            return datetime.strptime(raw, "%Y-%m-%d").replace(tzinfo=SEOUL_TZ)
         except ValueError:
-            return ""
+            pass
 
+    # 3) RFC 822 (예: Mon, 11 Aug 2026 09:00:00 GMT) - RSS/뉴스 API에서 흔함.
     try:
-        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
-    except ValueError:
-        return ""
+        dt = parsedate_to_datetime(raw)
+        if dt is not None:
+            if dt.tzinfo is None:
+                return None  # naive는 신뢰하지 않고 제외.
+            return dt
+    except (TypeError, ValueError):
+        pass
 
-    if dt.tzinfo is None:
-        return ""
-    return dt.astimezone(SEOUL_TZ).isoformat()
-
-
-def _normalize_article(raw: dict) -> dict:
-    url = (raw.get("url") or "").strip()
-    published = raw.get("published_date") or raw.get("publishedDate") or ""
-    content = raw.get("content") or raw.get("raw_content") or raw.get("rawContent") or ""
-
-    return {
-        "title": (raw.get("title") or "").strip(),
-        "url": url,
-        "source": (raw.get("source") or _source_from_url(url)).strip(),
-        "published_at": _normalize_published_at(published),
-        "summary": str(content).strip(),
-    }
+    return None
 
 
-def _within_target_day(published_at: str, target_date: datetime) -> bool:
-    if not published_at:
+def _within_target_day(dt: datetime | None, target_date: datetime) -> bool:
+    if dt is None:
         return False
-
-    try:
-        dt = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
-    except ValueError:
-        return False
-
-    if dt.tzinfo is None:
-        return False
-
     dt_seoul = dt.astimezone(SEOUL_TZ)
     day_start = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
     day_end = day_start + timedelta(days=1)
     return day_start <= dt_seoul < day_end
 
 
-def _call_search_api(query: str, target_date: datetime, timeout: int) -> list[dict]:
-    """Tavily Search API를 POST 방식으로 호출한다."""
-    api_url = os.environ.get("SEARCH_API_URL", "https://api.tavily.com/search").strip()
-    api_key = os.environ.get("SEARCH_API_KEY", "").strip()
+def _normalize_article(raw: dict, category: str) -> dict:
+    title = (raw.get("title") or "").strip()
+    url = (raw.get("url") or "").strip()
+    source = (raw.get("source") or "").strip() or _guess_source_from_url(url) or "출처 미상"
+    published_raw = (raw.get("published_date") or raw.get("published_at") or "").strip()
+    summary = (raw.get("content") or raw.get("summary") or "").strip()
 
-    if not api_url or not api_key:
-        raise NewsFetchError(
-            "SEARCH_API_URL 및 SEARCH_API_KEY 환경변수가 설정되어 있지 않습니다."
-        )
-
-    target_day = target_date.astimezone(SEOUL_TZ).date()
-    next_day = target_day + timedelta(days=1)
-
-    payload = {
-        "query": query,
-        "search_depth": "basic",
-        "topic": "news",
-        "start_date": target_day.isoformat(),
-        "end_date": next_day.isoformat(),
-        "max_results": 5,
-        "include_answer": False,
-        "include_raw_content": False,
-        "include_images": False,
+    return {
+        "title": title,
+        "url": url,
+        "source": source,
+        "published_at_raw": published_raw,
+        "summary": summary[:600],  # 프롬프트 토큰 낭비 방지를 위한 상한.
+        "category": category,
     }
 
-    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
+# ---------------------------------------------------------------------------
+# 검색 API 호출부 (Tavily 기본, 다른 서비스로 교체 가능하도록 함수만 분리)
+# ---------------------------------------------------------------------------
+
+def _call_search_api(query: str, timeout: int) -> list[dict]:
+    """
+    실제 검색 API 호출부.
+
+    기본 구현은 Tavily Search API(https://tavily.com)를 사용한다. Tavily는
+    `topic="news"` + `days=N` 파라미터로 최근 N일 이내 뉴스만 필터링해 주는
+    자체 날짜 필터를 제공하며, 이 결과를 다시 `_parse_published_at` +
+    `_within_target_day`로 한 번 더 검증한다(이중 날짜 필터 - 명세 4번).
+
+    다른 검색 API로 교체하려면 이 함수 내부만 수정하면 되고, 이후 파이프라인
+    (정규화/날짜 필터/중복 제거/우선순위 정렬)은 그대로 재사용할 수 있다.
+    SEARCH_API_URL 환경변수로 엔드포인트를, SEARCH_API_KEY(or TAVILY_API_KEY,
+    NEWS_API_KEY)로 키를 설정한다.
+    """
+    api_key = (
+        os.environ.get("TAVILY_API_KEY")
+        or os.environ.get("SEARCH_API_KEY")
+        or os.environ.get("NEWS_API_KEY")
+    )
+    if not api_key:
+        raise NewsFetchError(
+            "TAVILY_API_KEY(또는 SEARCH_API_KEY/NEWS_API_KEY) 환경변수가 설정되어 있지 "
+            "않습니다. README.md의 '필수 설정' 항목을 확인하세요."
+        )
+
+    api_url = os.environ.get("SEARCH_API_URL", DEFAULT_TAVILY_URL)
+
+    payload = {
+        "api_key": api_key,
+        "query": query,
+        "topic": "news",
+        # 목표일이 전일이므로 여유를 두고 최근 3일을 요청한 뒤, 파이썬 쪽에서
+        # Asia/Seoul 기준 정확한 하루로 다시 필터링한다 (API 날짜 필터의
+        # 시간대/경계 오차를 보정하기 위함).
+        "days": 3,
+        "max_results": RESULTS_PER_QUERY,
+        "include_answer": False,
+        "include_raw_content": False,
+    }
+    body = json.dumps(payload).encode("utf-8")
+
     request = urllib.request.Request(
         api_url,
         data=body,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        },
+        headers={"Content-Type": "application/json"},
         method="POST",
     )
 
-    last_error: Exception | None = None
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        error_body = exc.read().decode("utf-8", errors="replace")
+        raise NewsFetchError(f"검색 API HTTP 오류 (query='{query}'): {exc.code} {error_body}") from exc
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        raise NewsFetchError(f"검색 API 호출 실패 (query='{query}'): {exc}") from exc
 
-    for attempt in range(3):
-        try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
-                status = getattr(response, "status", 200)
-                response_body = response.read().decode("utf-8")
-
-            if status < 200 or status >= 300:
-                raise NewsFetchError(f"Tavily HTTP 오류: {status}")
-
-            data = json.loads(response_body)
-            results = data.get("results") or []
-            return [
-                _normalize_article(result)
-                for result in results
-                if isinstance(result, dict)
-            ]
-
-        except urllib.error.HTTPError as exc:
-            # 401/403은 인증 문제이므로 반복해도 해결되지 않는다.
-            if exc.code in (400, 401, 403):
-                detail = exc.read().decode("utf-8", errors="replace")
-                raise NewsFetchError(
-                    f"Tavily API 요청 오류 HTTP {exc.code}: {detail[:500]}"
-                ) from exc
-            last_error = exc
-
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
-            last_error = exc
-
-        if attempt < 2:
-            time.sleep(2 ** attempt)
-
-    raise NewsFetchError(
-        f"Tavily 뉴스 검색 실패 (query='{query}'): {last_error}"
-    ) from last_error
+    # Tavily 응답 스키마: {"results": [{"title","url","content","published_date","score"}, ...]}
+    # 다른 서비스 사용 시 이 부분만 맞춰 수정하면 된다.
+    results = data.get("results") or data.get("articles") or []
+    return [r for r in results if isinstance(r, dict)]
 
 
-def _dedupe_key(article: dict) -> str:
-    title = "".join((article.get("title") or "").lower().split())
-    return title
+# ---------------------------------------------------------------------------
+# 메인 엔트리
+# ---------------------------------------------------------------------------
 
-
-def fetch_news_for_date(target_date: datetime, timeout: int = 30) -> list[dict]:
+def fetch_news_for_date(target_date: datetime, timeout: int = 20) -> list[dict]:
     """
-    target_date(Asia/Seoul, tz-aware)의 하루치 뉴스를 수집하여
-    날짜 필터 + 중복 제거 + 출처 우선순위 정렬 후 반환한다.
+    target_date(Asia/Seoul, tz-aware) 하루치(00:00~23:59:59) 뉴스를,
+    7개 대분류 x 대분류별 다수 검색어로 폭넓게 수집한 뒤 다음 순서로 처리하여
+    반환한다.
+
+        검색 후보 수집 → 날짜 필터(이중 검증) → 정규화 →
+        중복 제거(URL → 제목) → 출처/카테고리 우선순위 정렬 → 카테고리별 상한 적용
+
+    반환값은 list[dict] (각 dict는 title/url/source/published_at/summary/category)이며,
+    최종 6~10건 "선정"은 이 함수가 아니라 AI(프롬프트)가 담당한다 — 이 함수는
+    선정 가능한 "충분한 후보"를 확보하는 것이 목표다.
+
+    모든 카테고리 검색이 전면 실패한 경우 NewsFetchError를 발생시킨다
+    (명세: 자동화 실패 조건 - 뉴스 수집 실패).
     """
     if target_date.tzinfo is None:
         raise NewsFetchError("target_date는 timezone-aware 이어야 합니다 (naive datetime 금지).")
 
-    all_articles: list[dict] = []
-    failed_topics: list[str] = []
+    raw_by_category: dict[str, list[dict]] = {cat: [] for cat in CATEGORY_QUERIES}
+    total_queries = 0
+    failed_queries: list[str] = []
 
-    for topic in SEARCH_TOPICS:
-        try:
-            articles = _call_search_api(topic, target_date, timeout=timeout)
-            all_articles.extend(articles)
-            print(f"[news_fetcher] '{topic}' 검색 완료: {len(articles)}건")
-        except NewsFetchError as exc:
-            failed_topics.append(topic)
-            print(f"[news_fetcher] 경고: '{topic}' 검색 실패 - {exc}")
+    for category, queries in CATEGORY_QUERIES.items():
+        for query in queries:
+            total_queries += 1
+            try:
+                results = _call_search_api(query, timeout=timeout)
+                raw_by_category[category].extend(
+                    _normalize_article(r, category) for r in results
+                )
+            except NewsFetchError as exc:
+                failed_queries.append(query)
+                print(f"[news_fetcher] 경고: '{query}' 검색 실패 - {exc}")
 
-    if not all_articles and failed_topics:
+    if failed_queries and len(failed_queries) == total_queries:
         raise NewsFetchError(
-            f"모든 뉴스 검색 주제({len(failed_topics)}개)가 실패했습니다: {failed_topics}"
+            f"모든 뉴스 검색어({total_queries}개)가 실패했습니다. 검색 API 설정을 확인하세요."
         )
 
-    # Tavily의 서버측 날짜 필터와 별개로 Python에서 한 번 더 검증한다.
-    filtered = [
-        article
-        for article in all_articles
-        if article.get("title")
-        and article.get("url")
-        and _within_target_day(article.get("published_at", ""), target_date)
-    ]
+    # ---- 날짜 필터 (Asia/Seoul 기준 전일 00:00~23:59:59, 이중 검증 중 파이썬 측) ----
+    for category in raw_by_category:
+        filtered = []
+        for article in raw_by_category[category]:
+            parsed_dt = _parse_published_at(article["published_at_raw"])
+            if not _within_target_day(parsed_dt, target_date):
+                continue
+            article["published_at"] = parsed_dt.astimezone(SEOUL_TZ).strftime("%Y-%m-%d %H:%M")
+            filtered.append(article)
+        raw_by_category[category] = filtered
 
-    # 동일 URL 제거
-    by_url: dict[str, dict] = {}
-    for article in filtered:
-        url = article["url"].rstrip("/")
-        existing = by_url.get(url)
-        if existing is None or _source_priority(article["source"]) < _source_priority(existing["source"]):
-            by_url[url] = article
+    # ---- 중복 제거: URL 우선, 그 다음 정규화된 제목 기준 ----
+    seen_urls: set[str] = set()
+    seen_title_keys: dict[str, dict] = {}
 
-    # 제목 중복 제거
-    deduped: dict[str, dict] = {}
-    for article in by_url.values():
-        key = _dedupe_key(article)
-        if not key:
-            continue
-        existing = deduped.get(key)
-        if existing is None or _source_priority(article["source"]) < _source_priority(existing["source"]):
-            deduped[key] = article
+    for category in raw_by_category:
+        deduped = []
+        for article in raw_by_category[category]:
+            if not article["title"]:
+                continue
 
-    result = list(deduped.values())
-    result.sort(key=lambda a: (_source_priority(a["source"]), a["title"]))
+            if article["url"] and article["url"] in seen_urls:
+                continue
 
-    print(
-        f"[news_fetcher] 최종 뉴스: {len(result)}건 "
-        f"(검색결과 {len(all_articles)}건 → 날짜필터 {len(filtered)}건 → 중복제거 {len(result)}건)"
-    )
+            title_key = _normalize_title_key(article["title"])
+            if not title_key:
+                continue
 
-    return result
+            if title_key in seen_title_keys:
+                # 동일 이슈를 여러 언론이 보도한 경우: 우선순위가 더 높은 출처를 대표로 남기고,
+                # 서로 다른 출처명은 병기한다.
+                existing = seen_title_keys[title_key]
+                if existing["source"] != article["source"]:
+                    combined_sources = {existing["source"], article["source"]}
+                    existing["source"] = ", ".join(sorted(combined_sources)) + " 등 종합"
+                if _source_priority(article["source"]) < _source_priority(existing["source"]):
+                    existing["source"] = article["source"]
+                continue
 
+            seen_title_keys[title_key] = article
+            if article["url"]:
+                seen_urls.add(article["url"])
+            deduped.append(article)
 
-if __name__ == "__main__":
-    # GitHub Actions 밖에서 직접 연결 테스트할 때 사용.
-    # API Key 자체는 절대 출력하지 않는다.
-    test_target = datetime.now(SEOUL_TZ) - timedelta(days=1)
-    test_target = test_target.replace(hour=0, minute=0, second=0, microsecond=0)
+        raw_by_category[category] = deduped
 
-    try:
-        results = fetch_news_for_date(test_target)
-        print(f"\n테스트 기준일: {test_target.date()}")
-        print(f"수집 건수: {len(results)}")
-        for article in results[:10]:
-            print(f"- {article['title']} | {article['source']} | {article['published_at']}")
-            print(f"  {article['url']}")
-    except NewsFetchError as exc:
-        print(f"테스트 실패: {exc}")
-        raise SystemExit(1)
+    # ---- 우선순위 정렬 + 카테고리별 상한 적용 ----
+    final_candidates: list[dict] = []
+    for category in CATEGORY_PRIORITY_ORDER:
+        articles = raw_by_category.get(category, [])
+        articles.sort(key=lambda a: _source_priority(a["source"]))
+        final_candidates.extend(articles[:MAX_CANDIDATES_PER_CATEGORY])
+
+    total = len(final_candidates)
+    if total < TARGET_MIN_CANDIDATES:
+        print(
+            f"[news_fetcher] 경고: 최종 후보가 {total}건으로 목표치"
+            f"({TARGET_MIN_CANDIDATES}건 이상)에 미달합니다. "
+            f"실제 전일 뉴스가 적은 날일 수 있으니 보고서에서는 해당 분야를 "
+            f"'중요 신규 이슈 없음'으로 처리하십시오."
+        )
+    elif total < TARGET_GOOD_CANDIDATES:
+        print(f"[news_fetcher] 안내: 최종 후보 {total}건 확보 (목표 권장치 {TARGET_GOOD_CANDIDATES}건).")
+    else:
+        print(f"[news_fetcher] 최종 후보 {total}건 확보 (양호).")
+
+    for cat in CATEGORY_PRIORITY_ORDER:
+        count = sum(1 for a in final_candidates if a["category"] == cat)
+        print(f"[news_fetcher]   - {cat}: {count}건")
+
+    return final_candidates
