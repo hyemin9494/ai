@@ -40,12 +40,18 @@ MIN_LENGTH_CHARS = 2500  # A4 2~3페이지 + 6개 뉴스 하위 카테고리 + 1
 REQUIRED_SECTION_PATTERNS = [
     ("제목", re.compile(r"^#\s*저축은행\s*Daily Morning Brief", re.MULTILINE)),
     ("기준일", re.compile(r"\*\*기준일\s*:\s*(\d{4}-\d{2}-\d{2})\*\*")),
-    ("Executive Summary", re.compile(r"^##\s*Executive Summary", re.MULTILINE)),
-    ("주요 뉴스", re.compile(r"^##\s*주요 뉴스", re.MULTILINE)),
-    ("종합 분석", re.compile(r"^##\s*종합 분석", re.MULTILINE)),
-    ("Executive Check Point", re.compile(r"^##\s*Executive Check Point", re.MULTILINE)),
-    ("리스크관리 체크포인트", re.compile(r"^##\s*리스크관리 체크포인트", re.MULTILINE)),
-    ("핵심 결론", re.compile(r"^##\s*핵심 결론", re.MULTILINE)),
+    # 아래 6개 소제목은 "##" 다음에 Gemini가 종종 붙이는 번호(예: "4.", "IV)")나
+    # 콜론을 허용하도록 관대하게 매칭한다. prompts/daily_morning_brief.txt에서
+    # 번호를 붙이지 말라고 명시했지만, 모델이 그래도 번호를 붙이는 경우
+    # 필수 섹션이 실제로는 존재함에도 "누락"으로 오판되는 것을 막기 위함이다
+    # (문구 자체가 완전히 달라지는 경우까지 관대하게 허용하지는 않는다 -
+    # 핵심 키워드는 정확히 일치해야 한다).
+    ("Executive Summary", re.compile(r"^##\s*(?:[\dIVX]+[.\)]\s*)?Executive Summary", re.MULTILINE | re.IGNORECASE)),
+    ("주요 뉴스", re.compile(r"^##\s*(?:[\dIVX]+[.\)]\s*)?주요\s*뉴스", re.MULTILINE)),
+    ("종합 분석", re.compile(r"^##\s*(?:[\dIVX]+[.\)]\s*)?종합\s*분석", re.MULTILINE)),
+    ("Executive Check Point", re.compile(r"^##\s*(?:[\dIVX]+[.\)]\s*)?Executive Check\s*Point", re.MULTILINE | re.IGNORECASE)),
+    ("리스크관리 체크포인트", re.compile(r"^##\s*(?:[\dIVX]+[.\)]\s*)?리스크\s*관리\s*체크\s*포인트", re.MULTILINE)),
+    ("핵심 결론", re.compile(r"^##\s*(?:[\dIVX]+[.\)]\s*)?핵심\s*결론", re.MULTILINE)),
 ]
 
 FILENAME_DATE_PATTERN = re.compile(r"(\d{4}-\d{2}-\d{2})\.md$")
