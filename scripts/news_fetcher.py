@@ -1,7 +1,22 @@
 """
-news_fetcher.py (v2 — 뉴스 밀도 개선판)
+news_fetcher.py (v3 — 날짜 필터 버그 수정판)
 
 뉴스 수집 전용 모듈 (명세 28번 항목, 그리고 "뉴스 2건만 수집되는 문제" 개선 요청 반영).
+
+v3 변경 사항 (문제: "검색결과 40건 → 날짜필터 0건" 재발 이슈 수정):
+- 근본 원인: 기존 `_parse_published_at`는 timezone 정보가 없는(naive)
+  published_date를 파싱에 성공해도 무조건 버렸다. 그런데 Tavily 검색 결과의
+  published_date는 소스에 따라 "2026-08-11 09:00:00"처럼 timezone 정보가
+  전혀 없는 형태로 오는 경우가 흔하고(특히 국내 언론사 메타데이터),
+  이런 값이 검색 결과의 상당 부분(이번 사례는 전부)을 차지하면 날짜 필터
+  이후 후보가 0건이 되는 문제가 발생했다.
+- 수정: timezone 정보가 없는 날짜는 Asia/Seoul(KST) 로컬 시각으로 간주하는
+  정책을 명시적으로 도입했다 (자세한 근거는 `_parse_published_at` 위쪽 주석
+  참고). 아울러 RFC822/ISO8601(공백·T 구분 모두)/날짜만 있는 값(".", "-", "/"
+  구분 모두)/Unix epoch까지 폭넓게 인식하도록 파서를 보강했다.
+- 디버그: 날짜 필터링 전/후 건수와, 제외된 기사가 "published_date 없음 /
+  날짜 파싱 실패 / 날짜 범위 밖" 중 어떤 이유로 제외됐는지 로그에 남긴다
+  (API Key 등 민감정보는 절대 출력하지 않는다).
 
 개선 핵심:
 - 기존에는 카테고리 구분 없이 단일 토픽 리스트(12개) 각각 1회 검색만 수행하여
@@ -33,7 +48,7 @@ import re
 import urllib.request
 import urllib.error
 import urllib.parse
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
@@ -170,42 +185,107 @@ def _normalize_title_key(title: str) -> str:
     return re.sub(r"[\s\W]+", "", title).lower()
 
 
-def _parse_published_at(raw: str) -> datetime | None:
+# ---------------------------------------------------------------------------
+# timezone 정보 없는(naive) published_date 처리 정책 (명세 5번)
+#
+# 근본 원인 분석: 기존 코드는 naive datetime(timezone 정보 없음)을 파싱해도
+# 무조건 버렸다(바로 아래 "구 정책" 참고). 그런데 Tavily 뉴스 검색 결과의
+# published_date는 소스마다 형식이 제각각이며, 특히 국내 언론사 페이지의
+# 메타데이터를 그대로 긁어온 경우 다음과 같이 timezone 정보가 전혀 없는
+# 형태(naive)로 오는 경우가 매우 흔하다:
+#   - "2026-08-11 09:00:00"  (공백 구분 ISO 유사 포맷)
+#   - "2026-08-11T09:00:00"  (T 구분이지만 오프셋 없음)
+#   - "2026.08.11"           (국내식 점 구분 날짜)
+# 이런 값들은 datetime.fromisoformat()으로는 "파싱"은 되지만 tzinfo가
+# None이라서, 기존 코드의 "if dt.tzinfo is not None: return dt" 분기를
+# 통과하지 못하고 이후 분기에서도 매칭되지 않아 결국 None으로 버려졌다.
+# 이 프로젝트의 검색어 대부분이 국내(한국어) 뉴스를 대상으로 하기 때문에,
+# 이런 naive 값들이 실제 검색 결과의 상당 부분(이번 이슈에서는 전부)을
+# 차지할 수 있고, 그 결과 "검색 40건 → 날짜필터 0건"과 같은 증상이
+# 발생한다.
+#
+# [정책] timezone 정보가 없는 published_date는 Asia/Seoul(KST) 로컬 시각으로
+# 간주한다. 이 서비스가 한국 저축은행 대상 국내 금융/뉴스 브리핑이고 검색
+# 대상도 대부분 국내 언론이므로, timezone이 누락된 값은 UTC보다 KST일
+# 가능성이 훨씬 높다. UTC로 잘못 간주하면 야간 시간대 기사가 실제보다
+# 9시간 이른 시각으로 밀려 날짜 경계에서 오탐(다음날로 인식)이 발생하므로,
+# 국내 서비스 특성상 KST를 기본값으로 삼는 것이 더 안전하다.
+# ---------------------------------------------------------------------------
+
+_ISO_LIKE_DATE_ONLY_RE = re.compile(r"^(\d{4})[.\-/](\d{2})[.\-/](\d{2})$")
+_UNIX_EPOCH_SECONDS_RE = re.compile(r"^\d{10}$")
+_UNIX_EPOCH_MILLIS_RE = re.compile(r"^\d{13}$")
+
+
+def _parse_published_at(raw: str) -> tuple[datetime | None, str]:
     """
     다양한 날짜 포맷을 timezone-aware datetime으로 파싱한다.
-    파싱 실패 시 None을 반환한다 (naive datetime을 만들어내지 않는다 - 명세 24번).
-    날짜를 확인할 수 없는 기사는 상위 로직에서 제외 처리된다.
+
+    반환값: (parsed_datetime 또는 None, reason)
+      - reason == "ok"                : timezone 정보가 명시된 값을 정상 파싱.
+      - reason == "ok_assumed_seoul"  : timezone 정보가 없어 위 정책에 따라
+                                         Asia/Seoul로 간주하여 파싱.
+      - reason == "no_raw"            : published_date 필드 자체가 없거나 빈 문자열.
+      - reason == "parse_failed"      : 알려진 어떤 포맷으로도 파싱할 수 없음.
+
+    이 함수는 절대 "임의로 오늘/내일 날짜"를 만들어내지 않는다 — 파싱 불가 시
+    항상 None을 반환하고, 상위 로직이 그 사실을 로그로 남긴 뒤 해당 기사를
+    후보에서 제외한다.
     """
     if not raw:
-        return None
+        return None, "no_raw"
     raw = raw.strip()
+    if not raw:
+        return None, "no_raw"
 
-    # 1) ISO 8601 (예: 2026-08-11T09:00:00+09:00, 2026-08-11T09:00:00Z)
-    try:
-        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        if dt.tzinfo is not None:
-            return dt
-    except ValueError:
-        pass
-
-    # 2) 날짜만 있는 경우 (예: 2026-08-11) -> Asia/Seoul 자정으로 간주.
-    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
+    # 0) Unix epoch 타임스탬프 (초/밀리초) - 일부 검색 API가 숫자 타임스탬프를
+    #    문자열로 돌려주는 경우에 대비. epoch는 정의상 UTC이므로 그대로 UTC로 처리.
+    if _UNIX_EPOCH_SECONDS_RE.fullmatch(raw):
         try:
-            return datetime.strptime(raw, "%Y-%m-%d").replace(tzinfo=SEOUL_TZ)
+            return datetime.fromtimestamp(int(raw), tz=timezone.utc), "ok"
+        except (ValueError, OverflowError, OSError):
+            pass
+    if _UNIX_EPOCH_MILLIS_RE.fullmatch(raw):
+        try:
+            return datetime.fromtimestamp(int(raw) / 1000, tz=timezone.utc), "ok"
+        except (ValueError, OverflowError, OSError):
+            pass
+
+    # 1) RFC 822/1123 (예: "Tue, 11 Aug 2026 09:00:00 GMT") - Tavily 뉴스 API
+    #    문서에 나온 기본 형식이며 RSS/뉴스 API에서도 흔하다.
+    try:
+        dt = parsedate_to_datetime(raw)
+    except (TypeError, ValueError, IndexError):
+        dt = None
+    if dt is not None:
+        if dt.tzinfo is not None:
+            return dt, "ok"
+        return dt.replace(tzinfo=SEOUL_TZ), "ok_assumed_seoul"
+
+    # 2) ISO 8601 계열. "Z"는 UTC 오프셋으로 치환하고, 공백/"T" 구분자를 모두
+    #    허용한다 (예: "2026-08-11T09:00:00+09:00", "2026-08-11 09:00:00Z",
+    #    "2026-08-11T09:00:00", "2026-08-11 09:00:00").
+    iso_candidate = raw.replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(iso_candidate)
+    except ValueError:
+        dt = None
+    if dt is not None:
+        if dt.tzinfo is not None:
+            return dt, "ok"
+        return dt.replace(tzinfo=SEOUL_TZ), "ok_assumed_seoul"
+
+    # 3) 날짜만 있는 경우 (예: "2026-08-11", "2026.08.11", "2026/08/11")
+    #    -> 시각 정보가 전혀 없으므로 Asia/Seoul 자정으로 간주.
+    m = _ISO_LIKE_DATE_ONLY_RE.match(raw)
+    if m:
+        year, month, day = (int(part) for part in m.groups())
+        try:
+            return datetime(year, month, day, tzinfo=SEOUL_TZ), "ok_assumed_seoul"
         except ValueError:
             pass
 
-    # 3) RFC 822 (예: Mon, 11 Aug 2026 09:00:00 GMT) - RSS/뉴스 API에서 흔함.
-    try:
-        dt = parsedate_to_datetime(raw)
-        if dt is not None:
-            if dt.tzinfo is None:
-                return None  # naive는 신뢰하지 않고 제외.
-            return dt
-    except (TypeError, ValueError):
-        pass
-
-    return None
+    return None, "parse_failed"
 
 
 def _within_target_day(dt: datetime | None, target_date: datetime) -> bool:
@@ -345,16 +425,72 @@ def fetch_news_for_date(target_date: datetime, timeout: int = 20) -> list[dict]:
             f"모든 뉴스 검색어({total_queries}개)가 실패했습니다. 검색 API 설정을 확인하세요."
         )
 
+    # ---- 디버그: 날짜 필터링 전, 실제 검색 결과의 published_date 원본 값을
+    #      그대로 로그에 남긴다 (명세 7, 8번 - API Key 등 민감정보는 절대
+    #      포함하지 않고, title/published_date만 노출한다). ----
+    raw_total = sum(len(articles) for articles in raw_by_category.values())
+    print(f"[news_fetcher] 검색결과: {raw_total}건 (날짜필터 전, 전체 카테고리 합산)")
+    print("[news_fetcher] 날짜필터 전 상세 (제목 / published_date 원본값):")
+    for category, articles in raw_by_category.items():
+        for article in articles:
+            raw_value = article["published_at_raw"] or "(없음)"
+            print(f"[news_fetcher]   - [{category}] {article['title'][:60]!r} / {raw_value!r}")
+
     # ---- 날짜 필터 (Asia/Seoul 기준 전일 00:00~23:59:59, 이중 검증 중 파이썬 측) ----
+    # 제외 이유를 명확히 구분해서 집계한다: published_date 없음 / 날짜 파싱 실패 /
+    # 날짜 범위 밖 (명세 10번: 왜 0건인지 진단 가능하게).
+    exclusion_reasons: dict[str, int] = {
+        "published_date 없음": 0,
+        "날짜 파싱 실패": 0,
+        "날짜 범위 밖": 0,
+    }
+    kept_total = 0
+
     for category in raw_by_category:
         filtered = []
         for article in raw_by_category[category]:
-            parsed_dt = _parse_published_at(article["published_at_raw"])
-            if not _within_target_day(parsed_dt, target_date):
+            parsed_dt, reason = _parse_published_at(article["published_at_raw"])
+
+            if reason == "no_raw":
+                exclusion_reasons["published_date 없음"] += 1
                 continue
+            if reason == "parse_failed":
+                exclusion_reasons["날짜 파싱 실패"] += 1
+                print(
+                    f"[news_fetcher]   날짜 파싱 실패: [{category}] {article['title'][:60]!r} "
+                    f"/ published_date={article['published_at_raw']!r}"
+                )
+                continue
+
+            # reason == "ok" 또는 "ok_assumed_seoul" (parsed_dt는 not None)
+            if not _within_target_day(parsed_dt, target_date):
+                exclusion_reasons["날짜 범위 밖"] += 1
+                continue
+
+            if reason == "ok_assumed_seoul":
+                # timezone 정보가 없어 정책에 따라 Asia/Seoul로 간주했음을
+                # 후보 데이터에도 남겨, AI/사람이 재검증할 때 참고할 수 있게 한다.
+                article["published_at_tz_assumed"] = True
+
             article["published_at"] = parsed_dt.astimezone(SEOUL_TZ).strftime("%Y-%m-%d %H:%M")
             filtered.append(article)
+            kept_total += 1
         raw_by_category[category] = filtered
+
+    print(
+        f"[news_fetcher] 날짜필터 후: 실제 전일({target_date.strftime('%Y-%m-%d')}) 뉴스 "
+        f"{kept_total}건 (검색결과 {raw_total}건 중)"
+    )
+    if kept_total == 0 and raw_total > 0:
+        print(
+            "[news_fetcher] 경고: 날짜필터 후 0건입니다. 제외 이유별 집계:\n"
+            + "\n".join(f"[news_fetcher]   - {reason}: {count}건" for reason, count in exclusion_reasons.items())
+        )
+    elif any(exclusion_reasons.values()):
+        print(
+            "[news_fetcher] 날짜필터 제외 이유별 집계: "
+            + ", ".join(f"{reason} {count}건" for reason, count in exclusion_reasons.items())
+        )
 
     # ---- 중복 제거: URL 우선, 그 다음 정규화된 제목 기준 ----
     seen_urls: set[str] = set()
@@ -390,6 +526,9 @@ def fetch_news_for_date(target_date: datetime, timeout: int = 20) -> list[dict]:
             deduped.append(article)
 
         raw_by_category[category] = deduped
+
+    deduped_total = sum(len(articles) for articles in raw_by_category.values())
+    print(f"[news_fetcher] 중복제거 후: {deduped_total}건 (날짜필터 통과 {kept_total}건 중)")
 
     # ---- 우선순위 정렬 + 카테고리별 상한 적용 ----
     final_candidates: list[dict] = []
