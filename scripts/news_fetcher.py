@@ -662,7 +662,7 @@ def fetch_news_for_date(target_date: datetime, timeout: int = 20) -> list[dict]:
     assert total <= TOTAL_CANDIDATE_CAP, (
         f"카테고리별 캡의 합({TOTAL_CANDIDATE_CAP})을 초과했습니다 - 캡 설정을 확인하세요 (실제 {total}건)."
     )
-    print(f"[news_fetcher] Claude 전달 후보: {total}건 (카테고리 캡 합계 {TOTAL_CANDIDATE_CAP}건 이내)")
+    print(f"[news_fetcher] AI 전달 후보: {total}건 (카테고리 캡 합계 {TOTAL_CANDIDATE_CAP}건 이내)")
 
     for cat in CATEGORY_PRIORITY_ORDER:
         count = sum(1 for a in final_candidates if a["category"] == cat)
