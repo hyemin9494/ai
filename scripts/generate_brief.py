@@ -138,8 +138,9 @@ def build_user_prompt(target_date: datetime, articles: list[dict]) -> str:
     total_count = len(articles)
     return (
         f"오늘 작성해야 할 보고서의 기준일은 {date_str} 입니다 (Asia/Seoul, 전일 00:00~24:00 뉴스 기준).\n\n"
-        f"아래는 뉴스 수집 파이프라인(7개 분야 x 다수 검색어 → 날짜 필터 → 출처 우선순위 → "
-        f"중복 제거)을 거쳐 확보한 총 {total_count}건의 후보 뉴스입니다. 분야별로 정리되어 있습니다:\n\n"
+        f"아래는 뉴스 수집 파이프라인(7개 분야 x 다수 검색어 → 날짜 필터 → 중복 제거 → "
+        f"Python 우선순위 평가로 카테고리별 상위 후보만 선별)을 거쳐 확보한 총 {total_count}건의 "
+        f"후보 뉴스입니다. 분야별로 정리되어 있습니다:\n\n"
         f"{news_block}\n\n"
         f"위 후보 목록 안에 있는 뉴스와 사실만 근거로 사용하세요. 후보에 없는 뉴스, 확인되지 않은 "
         f"수치나 발표를 만들어내지 마세요. 이 후보들 중에서 시스템 프롬프트의 선정 기준과 우선순위에 "
@@ -156,15 +157,32 @@ def generate_report_markdown(target_date: datetime, system_prompt: str) -> str:
     except news_fetcher.NewsFetchError as exc:
         raise GenerationFailure(f"뉴스 수집 실패: {exc}") from exc
 
-    print(f"[generate_brief] 뉴스 후보 {len(articles)}건을 프롬프트에 포함합니다.")
+    # news_fetcher.py가 이미 Python 단계에서 카테고리별 캡(합계
+    # news_fetcher.TOTAL_CANDIDATE_CAP건)으로 후보를 축소해서 반환하므로,
+    # 여기서는 그 결과를 그대로 프롬프트에 사용한다(중복 축소 로직을 두지
+    # 않음 - 요청 명세 11번: "필요한 파일만 수정한다").
+    print(f"[generate_brief] Claude 입력 후보 뉴스: {len(articles)}건")
 
     user_prompt = build_user_prompt(target_date, articles)
 
-    # 목표 분량(A4 2~3페이지, 6~10건 뉴스 각각 다수 문장 분석)을 담으려면
-    # 기존 기본값(4096 토큰)으로는 부족할 수 있다. ai_client.py 자체는 건드리지
-    # 않고, 그 모듈이 읽는 환경변수를 여기서 상향 지정한다(이미 외부에서
-    # ANTHROPIC_MAX_TOKENS가 지정된 경우는 그 값을 존중한다).
-    os.environ.setdefault("ANTHROPIC_MAX_TOKENS", "8000")
+    # ---- Claude 호출 전 프롬프트 크기 로깅 (API Key 등 민감정보는 출력하지 않음) ----
+    system_chars = len(system_prompt)
+    user_chars = len(user_prompt)
+    total_chars = system_chars + user_chars
+    print(
+        f"[generate_brief] 예상 입력 문자 수: system={system_chars:,} / user={user_chars:,} "
+        f"/ 합계={total_chars:,}"
+    )
+    print(f"[generate_brief] 최종 prompt 문자 수: {total_chars:,}")
+
+    # 후보를 최대 news_fetcher.TOTAL_CANDIDATE_CAP(=30)건으로 이미 줄였고,
+    # 뉴스별 작성 분량도 프롬프트(daily_morning_brief.txt) 쪽에서 더 간결하게
+    # 조정했으므로, 출력 토큰도 과도하게 크게 잡을 필요가 없다. 목표 분량은
+    # 여전히 A4 2~3페이지 수준이며, 이를 담기에 4,500~5,500 토큰 선이면
+    # 충분하다고 보고 기본값을 5,000으로 낮춘다. ai_client.py 자체는 건드리지
+    # 않고, 그 모듈이 읽는 환경변수만 여기서 지정한다(이미 외부에서
+    # ANTHROPIC_MAX_TOKENS가 지정된 경우는 그 값을 그대로 존중한다).
+    os.environ.setdefault("ANTHROPIC_MAX_TOKENS", "5000")
 
     try:
         markdown_text = ai_client.generate_text(system_prompt, user_prompt)
