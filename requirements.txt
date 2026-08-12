@@ -1,0 +1,12 @@
+# Daily Morning Brief 자동화 스크립트(scripts/)가 사용하는 Python 의존성.
+#
+# 이전(Claude/Anthropic) 버전은 표준 라이브러리(urllib)만으로 REST 호출을
+# 직접 구현해 별도 의존성이 없었다. Gemini API로 교체하면서 Google 공식
+# Python SDK인 google-genai를 사용하므로 이 파일이 새로 필요해졌다.
+#
+# GitHub Actions에서는 `.github/workflows/daily-brief.yml`의 의존성 설치
+# 단계(`pip install -r requirements.txt`)에서 이 파일을 사용한다.
+#
+# 참고: 뉴스 검색(Tavily)은 여전히 표준 라이브러리(urllib)로 직접 REST 호출을
+# 구현하므로(scripts/news_fetcher.py), 별도 패키지가 필요하지 않다.
+google-genai
