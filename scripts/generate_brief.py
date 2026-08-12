@@ -7,7 +7,7 @@ Daily Morning Brief 생성 오케스트레이션 스크립트.
   1. 실행 시각(Asia/Seoul) 기준으로 보고서 기준일 계산 (= 실행일 - 1일, 명세 13번)
   2. 해당 날짜의 보고서가 이미 존재하면 기본적으로 skip (명세 19번)
   3. 전일 뉴스 수집 (news_fetcher.py)
-  4. 뉴스가 있으면 Claude API 호출하여 보고서 생성 (ai_client.py + prompts/daily_morning_brief.txt)
+  4. 뉴스가 있으면 Gemini API 호출하여 보고서 생성 (ai_client.py + prompts/daily_morning_brief.txt)
   5. 생성된 보고서를 reports/YYYY/MM/YYYY-MM-DD.md 에 저장
   6. validate_report.py로 검증. 검증 실패 시 파일을 남기지 않고 비정상 종료
      (기존 보고서는 절대 덮어쓰지 않음, 빈 보고서를 생성하지 않음 - 명세 18번)
@@ -15,8 +15,8 @@ Daily Morning Brief 생성 오케스트레이션 스크립트.
 이 스크립트는 GitHub Actions에서 호출되지만, 로컬에서도 동일하게 동작한다.
 
 환경변수:
-  ANTHROPIC_API_KEY   (필수) - ai_client.py에서 사용
-  ANTHROPIC_MODEL     (선택) - 기본값은 ai_client.py 참고
+  GEMINI_API_KEY       (필수) - ai_client.py에서 사용 (Google Gemini API 키)
+  GEMINI_MODEL         (선택) - 기본값은 ai_client.py 참고
   SEARCH_API_URL       (필수) - news_fetcher.py에서 사용
   SEARCH_API_KEY / NEWS_API_KEY (필수) - news_fetcher.py에서 사용
   FORCE_REGENERATE    (선택, "true"/"false") - 이미 존재하는 보고서를 강제로 재생성할지 여부.
@@ -159,31 +159,33 @@ def generate_report_markdown(target_date: datetime, system_prompt: str) -> str:
 
     # news_fetcher.py가 이미 Python 단계에서 카테고리별 캡(합계
     # news_fetcher.TOTAL_CANDIDATE_CAP건)으로 후보를 축소해서 반환하므로,
-    # 여기서는 그 결과를 그대로 프롬프트에 사용한다(중복 축소 로직을 두지
-    # 않음 - 요청 명세 11번: "필요한 파일만 수정한다").
-    print(f"[generate_brief] Claude 입력 후보 뉴스: {len(articles)}건")
+    # 여기서는 그 결과를 그대로 프롬프트에 사용한다(중복 축소 로직을 두지 않음).
+    ai_model = os.environ.get("GEMINI_MODEL", ai_client.DEFAULT_MODEL)
+    print(f"[generate_brief] AI provider: {ai_client.AI_PROVIDER_NAME}")
+    print(f"[generate_brief] AI model: {ai_model}")
+    print(f"[generate_brief] AI 후보 뉴스: {len(articles)}건")
 
     user_prompt = build_user_prompt(target_date, articles)
 
-    # ---- Claude 호출 전 프롬프트 크기 로깅 (API Key 등 민감정보는 출력하지 않음) ----
+    # ---- Gemini 호출 전 입력 크기 로깅 (API Key 등 민감정보는 절대 출력하지 않음) ----
     system_chars = len(system_prompt)
     user_chars = len(user_prompt)
     total_chars = system_chars + user_chars
     print(
-        f"[generate_brief] 예상 입력 문자 수: system={system_chars:,} / user={user_chars:,} "
+        f"[generate_brief] 입력 문자 수: system={system_chars:,} / user={user_chars:,} "
         f"/ 합계={total_chars:,}"
     )
-    print(f"[generate_brief] 최종 prompt 문자 수: {total_chars:,}")
 
     # 후보를 최대 news_fetcher.TOTAL_CANDIDATE_CAP(=30)건으로 이미 줄였고,
-    # 뉴스별 작성 분량도 프롬프트(daily_morning_brief.txt) 쪽에서 더 간결하게
+    # 뉴스별 작성 분량도 프롬프트(daily_morning_brief.txt) 쪽에서 간결하게
     # 조정했으므로, 출력 토큰도 과도하게 크게 잡을 필요가 없다. 목표 분량은
     # 여전히 A4 2~3페이지 수준이며, 이를 담기에 4,500~5,500 토큰 선이면
-    # 충분하다고 보고 기본값을 5,000으로 낮춘다. ai_client.py 자체는 건드리지
+    # 충분하다고 보고 기본값을 5,000으로 유지한다. ai_client.py 자체는 건드리지
     # 않고, 그 모듈이 읽는 환경변수만 여기서 지정한다(이미 외부에서
-    # ANTHROPIC_MAX_TOKENS가 지정된 경우는 그 값을 그대로 존중한다).
-    os.environ.setdefault("ANTHROPIC_MAX_TOKENS", "5000")
+    # GEMINI_MAX_TOKENS가 지정된 경우는 그 값을 그대로 존중한다).
+    os.environ.setdefault("GEMINI_MAX_TOKENS", "5000")
 
+    print("[generate_brief] 최종 보고서 생성 시작")
     try:
         markdown_text = ai_client.generate_text(system_prompt, user_prompt)
     except ai_client.AIClientError as exc:
