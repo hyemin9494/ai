@@ -1,0 +1,93 @@
+name: Daily Morning Brief 자동 생성
+
+# 매일 오전 8시(Asia/Seoul, UTC+9) 실행.
+# GitHub Actions cron은 UTC 기준이므로, 08:00 KST = 전날 23:00 UTC.
+# 한국은 서머타임을 사용하지 않으므로 연중 고정 오프셋(UTC+9)이다.
+on:
+  schedule:
+    - cron: "0 23 * * *"
+  workflow_dispatch:
+    inputs:
+      force_regenerate:
+        description: "이미 존재하는 보고서를 강제로 재생성할지 여부 (true/false)"
+        required: false
+        default: "false"
+      target_date:
+        description: "보고서 기준일을 직접 지정 (YYYY-MM-DD). 비워두면 실행일-1일을 사용."
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-brief
+  cancel-in-progress: false
+
+jobs:
+  generate-and-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: 저장소 checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Python 설치
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 필수 환경변수 확인
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SEARCH_API_KEY: ${{ secrets.SEARCH_API_KEY }}
+        run: |
+          set -e
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::error::ANTHROPIC_API_KEY secret이 설정되어 있지 않습니다."
+            exit 1
+          fi
+          if [ -z "$SEARCH_API_KEY" ]; then
+            echo "::error::SEARCH_API_KEY secret이 설정되어 있지 않습니다."
+            exit 1
+          fi
+          echo "필수 환경변수 확인 완료."
+
+      - name: Daily Morning Brief 생성
+        id: generate
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
+          SEARCH_API_URL: ${{ vars.SEARCH_API_URL }}
+          SEARCH_API_KEY: ${{ secrets.SEARCH_API_KEY }}
+          FORCE_REGENERATE: ${{ github.event.inputs.force_regenerate || 'false' }}
+          TARGET_DATE: ${{ github.event.inputs.target_date || '' }}
+        run: |
+          python scripts/generate_brief.py
+
+      - name: 보고서 목록(data/reports.json) 갱신
+        run: |
+          python scripts/update_index.py
+
+      - name: 변경사항 확인
+        id: git-diff
+        run: |
+          git add reports data
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "변경된 파일이 없습니다."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 커밋 및 푸시
+        if: steps.git-diff.outputs.changed == 'true'
+        run: |
+          git config user.name "daily-brief-bot"
+          git config user.email "actions@users.noreply.github.com"
+          TARGET_DATE_LABEL=$(date -u -d '9 hours ago' +'%Y-%m-%d' 2>/dev/null || date +'%Y-%m-%d')
+          git commit -m "chore: add daily morning brief (auto, ${TARGET_DATE_LABEL})"
+          git push
