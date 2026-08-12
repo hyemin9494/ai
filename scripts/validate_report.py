@@ -29,8 +29,13 @@ import re
 import sys
 from pathlib import Path
 
-MIN_LENGTH_CHARS = 400  # A4 2~3페이지 수준의 보고서라면 이보다 훨씬 길어야 하지만,
-                         # 최소 문자 수 하한선으로 명백히 빈약한 문서를 걸러낸다.
+MIN_LENGTH_CHARS = 2500  # A4 2~3페이지 + 6개 뉴스 하위 카테고리 + 12개 리스크
+                          # 체크포인트 항목을 모두 다루면 자연히 이보다 훨씬 길어진다.
+                          # 뉴스가 2건 수준으로 부실했던 문제(주요 뉴스 밀도 개선
+                          # 요청) 재발을 막기 위한 최소 하한선이며, 실제 뉴스가
+                          # 정말 없는 극단적인 날에도 12개 리스크 체크포인트
+                          # 항목과 6개 뉴스 하위 카테고리 표시("중요 신규 이슈
+                          # 없음")만으로도 이 하한선은 충족 가능하다.
 
 REQUIRED_SECTION_PATTERNS = [
     ("제목", re.compile(r"^#\s*저축은행\s*Daily Morning Brief", re.MULTILINE)),
