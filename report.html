@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title id="page-title">Daily Morning Brief 상세 | 저축은행 Daily Morning Brief</title>
+<meta name="description" content="저축은행 Daily Morning Brief 상세 보고서. Executive Summary, 주요 뉴스, 종합 분석, 리스크관리 체크포인트를 제공합니다.">
+<link rel="canonical" href="./report.html">
+<link rel="stylesheet" href="css/style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
+</head>
+<body>
+<header class="site-header">
+  <div class="container">
+    <a class="site-title-link" href="index.html">
+      <h1 class="site-title">저축은행 Daily Morning Brief</h1>
+    </a>
+    <p class="site-subtitle">Archive · 리스크관리부서 임원 보고용</p>
+  </div>
+</header>
+
+<main class="container">
+  <nav class="report-nav" aria-label="보고서 이동">
+    <a id="nav-main" class="nav-btn nav-btn--secondary" href="index.html">← 메인으로 돌아가기</a>
+    <div class="report-nav__dates">
+      <a id="nav-prev" class="nav-btn" href="#" aria-disabled="true">이전 날짜</a>
+      <a id="nav-next" class="nav-btn" href="#" aria-disabled="true">다음 날짜</a>
+    </div>
+  </nav>
+
+  <article id="report-root" aria-label="보고서 본문">
+    <p id="status-message" role="status">보고서를 불러오는 중입니다…</p>
+  </article>
+
+  <nav class="report-nav report-nav--bottom" aria-label="보고서 이동">
+    <a id="nav-prev-bottom" class="nav-btn" href="#" aria-disabled="true">이전 날짜</a>
+    <a id="nav-next-bottom" class="nav-btn" href="#" aria-disabled="true">다음 날짜</a>
+    <a id="nav-main-bottom" class="nav-btn nav-btn--secondary" href="index.html">메인으로 돌아가기</a>
+  </nav>
+</main>
+
+<footer class="site-footer">
+  <div class="container">
+    <p>본 아카이브는 매일 오전 8시(Asia/Seoul) 자동 생성됩니다.</p>
+  </div>
+</footer>
+
+<script src="js/main.js"></script>
+<script>Archive.renderReportPage();</script>
+</body>
+</html>
