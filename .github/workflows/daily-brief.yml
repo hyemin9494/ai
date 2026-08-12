@@ -40,14 +40,27 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: 의존성 설치
+        run: |
+          pip install -r requirements.txt
+
+      - name: 의존성 설치 확인 (google-genai)
+        run: |
+          set -e
+          python -c "
+          import importlib.metadata as m
+          import google.genai  # noqa: F401  (import 자체가 되는지 확인)
+          print('google-genai 설치 확인 완료, 버전:', m.version('google-genai'))
+          "
+
       - name: 필수 환경변수 확인
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           SEARCH_API_KEY: ${{ secrets.SEARCH_API_KEY }}
         run: |
           set -e
-          if [ -z "$ANTHROPIC_API_KEY" ]; then
-            echo "::error::ANTHROPIC_API_KEY secret이 설정되어 있지 않습니다."
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "::error::GEMINI_API_KEY secret이 설정되어 있지 않습니다."
             exit 1
           fi
           if [ -z "$SEARCH_API_KEY" ]; then
@@ -59,8 +72,8 @@ jobs:
       - name: Daily Morning Brief 생성
         id: generate
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
           SEARCH_API_URL: ${{ vars.SEARCH_API_URL }}
           SEARCH_API_KEY: ${{ secrets.SEARCH_API_KEY }}
           FORCE_REGENERATE: ${{ github.event.inputs.force_regenerate || 'false' }}
