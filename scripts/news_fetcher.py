@@ -1,5 +1,20 @@
 """
-news_fetcher.py (v3 — 날짜 필터 버그 수정판)
+news_fetcher.py (v4 — Claude 입력 토큰 절감을 위한 Python 후보 축소 추가)
+
+v4 변경 사항 (문제: 최종 후보 79건 전체가 그대로 Claude 프롬프트에 들어가
+입력 토큰이 과도해지는 문제 수정):
+- 기존에는 카테고리별 상한(MAX_CANDIDATES_PER_CATEGORY=15, 최대 7개 카테고리
+  x 15 = 105건까지도 가능)만 있어 "충분한 후보"를 넘어 "지나치게 많은 후보"가
+  그대로 Claude에 전달되는 문제가 있었다.
+- CATEGORY_CANDIDATE_CAPS(저축은행 8 / 국내금융정책 5 / 경제 4 / 금리 3 /
+  환율 2 / 증시 4 / 국제 4, 합계 30)로 카테고리별 캡을 명확히 정하고,
+  `_candidate_score()`로 (1)공식기관 출처 (2)저축은행 직접 관련성
+  (3)금융시장 영향도 (4)최신성 (5)구체성 (6)중복 가능성으로 점수를 매겨
+  카테고리별 상위 N건만 Claude에 전달하도록 변경했다.
+- "날짜필터 통과 → 중복제거 → Python 후보 축소" 각 단계의 건수를 모두
+  로그로 남겨 진단 가능하게 했다 (API Key 등 민감정보는 출력하지 않음).
+
+v3 변경 사항 (문제: "검색결과 40건 → 날짜필터 0건" 재발 이슈 수정):
 
 뉴스 수집 전용 모듈 (명세 28번 항목, 그리고 "뉴스 2건만 수집되는 문제" 개선 요청 반영).
 
@@ -142,13 +157,44 @@ CATEGORY_TO_REPORT_SECTION = {
 
 CATEGORY_PRIORITY_ORDER = ["저축은행", "국내금융정책", "경제", "금리", "환율", "증시", "국제"]
 
-# 각 검색어당 요청할 결과 수, 카테고리별 최대 후보 캡(토큰 낭비 방지 + 노이즈 억제).
+# 각 검색어당 요청할 결과 수.
 RESULTS_PER_QUERY = 6
-MAX_CANDIDATES_PER_CATEGORY = 15
-TARGET_MIN_CANDIDATES = 20
-TARGET_GOOD_CANDIDATES = 30
+
+# ---------------------------------------------------------------------------
+# Claude 입력 토큰 절감을 위한 "Python 단계 후보 축소" (v4 추가)
+#
+# 배경: 날짜 필터/중복 제거를 마친 후보 풀이 80건 전후로 형성되는데, 이 전부를
+# Claude 프롬프트에 넣으면 입력 토큰이 과도하게 커진다. Claude가 6~10건을
+# "선정"하는 역할은 유지하되, 그 전에 Python 쪽에서 카테고리별로 명확한
+# 우선순위 점수를 매겨 "Claude에게 넘길 후보"를 카테고리별 캡 수준으로 먼저
+# 추려낸다. 캡의 합(30)은 실제 검색 결과가 부족한 카테고리가 있어도 다른
+# 카테고리 쪽으로 재분배하지 않는다 — 분야 간 균형(저축은행 최우선 비중 유지)이
+# "총량 30건 채우기"보다 더 중요하기 때문이다.
+# ---------------------------------------------------------------------------
+CATEGORY_CANDIDATE_CAPS: dict[str, int] = {
+    "저축은행": 8,
+    "국내금융정책": 5,
+    "경제": 4,
+    "금리": 3,
+    "환율": 2,
+    "증시": 4,
+    "국제": 4,
+}
+TOTAL_CANDIDATE_CAP = sum(CATEGORY_CANDIDATE_CAPS.values())  # = 30
+
+# 후보 풀(날짜 필터 + 중복 제거 이후, Python 축소 이전) 규모에 대한 참고용 기준값.
+# Claude에 넘기는 최종 건수가 아니라, "선택할 재료가 충분했는지"를 진단하기 위한
+# 값이다 (혼동 방지를 위해 TOTAL_CANDIDATE_CAP과 분리해서 유지).
+TARGET_MIN_POOL_SIZE = 20
+TARGET_GOOD_POOL_SIZE = 30
 
 DEFAULT_TAVILY_URL = "https://api.tavily.com/search"
+
+# 금융시장/저축은행 영향도를 근사하기 위한 키워드 (Python 우선순위 평가 2/3단계에서 사용).
+IMPACT_KEYWORDS = [
+    "기준금리", "금융위", "금융감독원", "한국은행", "제재", "부실", "연체율",
+    "PF", "M&A", "BIS", "규제", "정책", "충당금", "NPL", "유동성", "예대율",
+]
 
 
 class NewsFetchError(RuntimeError):
@@ -183,6 +229,60 @@ def _guess_source_from_url(url: str) -> str | None:
 def _normalize_title_key(title: str) -> str:
     """중복 제거용 제목 정규화: 공백/기호 제거 + 소문자화."""
     return re.sub(r"[\s\W]+", "", title).lower()
+
+
+def _recency_hour(article: dict) -> int:
+    """published_at("YYYY-MM-DD HH:MM")에서 시각(0~23)만 추출한다. 실패 시 0."""
+    published_at = article.get("published_at", "")
+    try:
+        return int(published_at.split(" ")[1].split(":")[0])
+    except (IndexError, ValueError):
+        return 0
+
+
+def _candidate_score(article: dict, category: str) -> float:
+    """
+    "Python 후보 축소" 단계에서 카테고리 내 우선순위를 매기는 점수 함수.
+    점수가 높을수록 Claude에 먼저 전달될 후보다. 아래 6가지 기준(요청 명세
+    2번의 우선순위 순서)을 각각 독립된 가산 요소로 반영한다.
+    """
+    text = f"{article['title']} {article['summary']}"
+    score = 0.0
+
+    # 1) 공식기관 출처 최우선 (공식기관=0, 주요언론=1, 기타=2 -> 점수는 역순 가중)
+    priority = _source_priority(article["source"])
+    score += {0: 300.0, 1: 150.0, 2: 0.0}[priority]
+
+    # 2) 저축은행 직접 관련성: 카테고리 자체가 저축은행이거나, 제목/요약에
+    #    "저축은행"이 실제로 언급된 경우 (카테고리가 달라도 저축은행이 직접
+    #    언급되면 업권 관련 기사일 가능성이 높다).
+    if "저축은행" in text:
+        score += 120.0
+    elif category == "저축은행":
+        score += 60.0
+
+    # 3) 금융시장 영향도 근사치: 정책/리스크 핵심 키워드 포함 개수만큼 가산.
+    score += 15.0 * sum(1 for kw in IMPACT_KEYWORDS if kw in text)
+
+    # 4) 최신성: 같은 "전일" 하루 안에서는 시각이 늦을수록(장 마감 후/저녁 발표 등
+    #    최신 정보일 가능성) 소폭 가산. 하루 안의 미세 차이라 가중치는 작게 둔다.
+    score += _recency_hour(article) * 1.0
+
+    # 5) 제목/내용의 구체성: 구체적 수치·발표가 포함된 기사일수록 실제 브리핑에
+    #    유용한 경우가 많다는 가정 하에, 숫자 포함 여부와 요약 길이를 반영한다.
+    if re.search(r"\d", text):
+        score += 20.0
+    score += min(len(article["summary"]), 300) / 10.0
+
+    # 6) 중복 가능성이 낮은 기사: 이 시점의 article은 이미 URL·제목 정규화
+    #    기준 중복 제거를 마친 뒤이므로(아래 "중복 제거" 단계), 이 단계에서는
+    #    추가 조치가 필요 없다. 다만 "N개 언론 종합"으로 병합된 기사(출처에
+    #    " 등 종합"이 포함된 경우)는 여러 언론이 동시에 보도한 만큼 중요도가
+    #    높은 이슈일 가능성이 크므로 소폭 가산한다.
+    if "등 종합" in article["source"]:
+        score += 25.0
+
+    return score
 
 
 # ---------------------------------------------------------------------------
@@ -530,25 +630,39 @@ def fetch_news_for_date(target_date: datetime, timeout: int = 20) -> list[dict]:
     deduped_total = sum(len(articles) for articles in raw_by_category.values())
     print(f"[news_fetcher] 중복제거 후: {deduped_total}건 (날짜필터 통과 {kept_total}건 중)")
 
-    # ---- 우선순위 정렬 + 카테고리별 상한 적용 ----
+    if deduped_total < TARGET_MIN_POOL_SIZE:
+        print(
+            f"[news_fetcher] 참고: 중복제거 후 후보 풀이 {deduped_total}건으로 참고 기준치"
+            f"({TARGET_MIN_POOL_SIZE}건)보다 적습니다. 실제 전일 뉴스가 적은 날일 수 있습니다."
+        )
+    elif deduped_total < TARGET_GOOD_POOL_SIZE:
+        print(f"[news_fetcher] 참고: 중복제거 후 후보 풀 {deduped_total}건 (권장 {TARGET_GOOD_POOL_SIZE}건).")
+    else:
+        print(f"[news_fetcher] 참고: 중복제거 후 후보 풀 {deduped_total}건 (양호).")
+
+    # ---- Python 우선순위 평가 + 카테고리별 상한 적용 (Claude 입력 축소, 요청 명세 1~2번) ----
+    # 후보 풀 전체를 Claude에 넘기지 않고, 카테고리별로 _candidate_score 기준
+    # 상위 CATEGORY_CANDIDATE_CAPS[category]건만 선별한다. 카테고리 캡의 합은
+    # TOTAL_CANDIDATE_CAP(=30)을 넘지 않도록 설계되어 있으므로, 카테고리별로만
+    # 캡을 적용하면 전체 총량도 자동으로 30건 이하가 된다.
     final_candidates: list[dict] = []
     for category in CATEGORY_PRIORITY_ORDER:
         articles = raw_by_category.get(category, [])
-        articles.sort(key=lambda a: _source_priority(a["source"]))
-        final_candidates.extend(articles[:MAX_CANDIDATES_PER_CATEGORY])
+        cap = CATEGORY_CANDIDATE_CAPS.get(category, 0)
+        articles.sort(key=lambda a: _candidate_score(a, category), reverse=True)
+        selected = articles[:cap]
+        final_candidates.extend(selected)
+        if articles:
+            print(
+                f"[news_fetcher]   Python 후보 축소 - {category}: "
+                f"{len(articles)}건 중 상위 {len(selected)}건 선정 (카테고리 캡 {cap}건)"
+            )
 
     total = len(final_candidates)
-    if total < TARGET_MIN_CANDIDATES:
-        print(
-            f"[news_fetcher] 경고: 최종 후보가 {total}건으로 목표치"
-            f"({TARGET_MIN_CANDIDATES}건 이상)에 미달합니다. "
-            f"실제 전일 뉴스가 적은 날일 수 있으니 보고서에서는 해당 분야를 "
-            f"'중요 신규 이슈 없음'으로 처리하십시오."
-        )
-    elif total < TARGET_GOOD_CANDIDATES:
-        print(f"[news_fetcher] 안내: 최종 후보 {total}건 확보 (목표 권장치 {TARGET_GOOD_CANDIDATES}건).")
-    else:
-        print(f"[news_fetcher] 최종 후보 {total}건 확보 (양호).")
+    assert total <= TOTAL_CANDIDATE_CAP, (
+        f"카테고리별 캡의 합({TOTAL_CANDIDATE_CAP})을 초과했습니다 - 캡 설정을 확인하세요 (실제 {total}건)."
+    )
+    print(f"[news_fetcher] Claude 전달 후보: {total}건 (카테고리 캡 합계 {TOTAL_CANDIDATE_CAP}건 이내)")
 
     for cat in CATEGORY_PRIORITY_ORDER:
         count = sum(1 for a in final_candidates if a["category"] == cat)
