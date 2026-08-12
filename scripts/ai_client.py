@@ -65,11 +65,42 @@ DEFAULT_MODEL = "gemini-3.6-flash"
 DEFAULT_TIMEOUT_SECONDS = 120
 DEFAULT_MAX_RETRIES = 3
 DEFAULT_RETRY_BACKOFF_SECONDS = 5
-DEFAULT_MAX_TOKENS = 5000
+
+# 기존 5000에서 8000으로 상향 (문제 진단 결과 반영).
+#
+# 실제 원인: gemini-3.x 계열 모델(gemini-3.6-flash 포함)은 기본적으로
+# "thinking"(내부 추론) 토큰을 사용하며, 이 thinking 토큰이 max_output_tokens
+# 예산을 실제 출력 텍스트와 "합산"해서 소비한다(Google 공식 문서 "Thinking |
+# Gemini Enterprise Agent Platform"과 다수의 실사용 이슈 리포트에서 확인:
+# usageMetadata.thoughtsTokenCount가 출력 쪽 과금/예산에 포함됨). 이번 프로젝트는
+# 입력이 30건의 뉴스 후보(약 28,000토큰)로 크고 요구 출력 형식도 7개 섹션 +
+# 6~10건의 구조화된 뉴스 분석이라 실제 텍스트 생성에 필요한 토큰이 상당한데,
+# 기존 max_output_tokens=5000 중 상당 부분이 thinking 토큰으로 소진되면서
+# 응답이 "주요 뉴스 브리핑"까지만 쓰이고 중간에 잘린 것으로 보인다(finish_reason
+# 진단 로그로 다음 실행에서 확정 가능 - 아래 generate_text 참고).
+#
+# 대응: (1) thinking_level을 LOW로 낮춰 thinking 토큰 소비 자체를 줄이고,
+# (2) max_output_tokens 여유치를 8000으로 상향해 이중으로 여유를 확보한다.
+DEFAULT_MAX_TOKENS = 8000
+
+# gemini-3.x 모델의 thinking 강도 설정. thinking_budget(구 파라미터, 2.5 계열)
+# 대신 3.x 계열은 thinking_level(문자열 등급: MINIMAL/LOW/MEDIUM/HIGH)을 쓴다
+# (Google 공식 문서 "Thinking | Gemini Enterprise Agent Platform" 및 SDK
+# `google.genai.types.ThinkingLevel` enum에서 확인). 이 프로젝트는 창의적
+# 추론이 아니라 "주어진 뉴스 후보를 정해진 형식으로 정리"하는 구조화된
+# 요약/분류 작업이므로 깊은 추론이 크게 필요하지 않다고 보고 LOW로 낮춰
+# thinking 토큰 소비를 줄이고 실제 출력(보고서 본문)에 더 많은 토큰 예산을
+# 확보한다. 값 자체가 부담될 경우 GEMINI_THINKING_LEVEL 환경변수로 조정 가능.
+DEFAULT_THINKING_LEVEL = "LOW"
 
 # 재시도해도 성공 가능성이 낮은 HTTP 상태코드(인증 오류/잘못된 요청/모델 없음 등).
 # 이 코드에 해당하면 즉시 실패 처리하고 재시도하지 않는다.
 NON_RETRYABLE_STATUS_CODES = {400, 401, 403, 404}
+
+# 디버그 로그에서 응답 본문 앞/뒤로 몇 글자를 미리보기로 출력할지. API Key나
+# 개인정보는 애초에 이 응답 본문에 포함되지 않지만(뉴스 요약/분석 텍스트일 뿐),
+# 로그가 과도하게 길어지는 것을 막기 위해 상한을 둔다.
+DEBUG_PREVIEW_CHARS = 300
 
 
 def _get_config() -> dict:
@@ -82,6 +113,7 @@ def _get_config() -> dict:
     timeout = int(os.environ.get("GEMINI_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS))
     max_retries = int(os.environ.get("GEMINI_MAX_RETRIES", DEFAULT_MAX_RETRIES))
     max_tokens = int(os.environ.get("GEMINI_MAX_TOKENS", DEFAULT_MAX_TOKENS))
+    thinking_level = os.environ.get("GEMINI_THINKING_LEVEL", DEFAULT_THINKING_LEVEL)
 
     return {
         "api_key": api_key,
@@ -89,7 +121,65 @@ def _get_config() -> dict:
         "timeout": timeout,
         "max_retries": max_retries,
         "max_tokens": max_tokens,
+        "thinking_level": thinking_level,
     }
+
+
+def _log_response_debug_info(response) -> None:
+    """
+    Gemini 응답의 진단 정보를 로그로 남긴다 (명세: 원본 텍스트/빈 응답 여부/
+    heading 형식을 확인할 수 있는 디버그 로그, 단 API Key나 개인정보는 출력하지
+    않음). 이 함수가 다루는 정보는 모델 사용량 메타데이터와 보고서 본문(뉴스
+    요약/분석 텍스트) 미리보기뿐이며, API Key나 개인정보는 애초에 이 응답에
+    포함되지 않는다.
+    """
+    try:
+        candidates = getattr(response, "candidates", None) or []
+        finish_reason = candidates[0].finish_reason if candidates else None
+    except Exception:  # noqa: BLE001 - 진단 로그 자체가 실패해도 본 로직에 영향 주지 않음
+        finish_reason = None
+
+    usage = getattr(response, "usage_metadata", None)
+    prompt_tokens = getattr(usage, "prompt_token_count", None) if usage else None
+    output_tokens = getattr(usage, "candidates_token_count", None) if usage else None
+    thinking_tokens = getattr(usage, "thoughts_token_count", None) if usage else None
+    total_tokens = getattr(usage, "total_token_count", None) if usage else None
+
+    print(
+        f"[ai_client] Gemini 응답 메타데이터: finish_reason={finish_reason}, "
+        f"prompt_tokens={prompt_tokens}, output_tokens={output_tokens}, "
+        f"thinking_tokens={thinking_tokens}, total_tokens={total_tokens}"
+    )
+
+    # finish_reason == MAX_TOKENS는 "응답이 정상적으로 끝난 것이 아니라 토큰
+    # 예산이 소진되어 중간에 잘렸다"는 뜻이다. 이번에 실제로 관찰된 "뒤쪽 4개
+    # 섹션 누락" 증상과 정확히 일치하는 원인이므로 명확한 경고를 남긴다.
+    if finish_reason is not None and str(finish_reason).endswith("MAX_TOKENS"):
+        print(
+            "[ai_client] 경고: finish_reason=MAX_TOKENS - 응답이 max_output_tokens "
+            "예산(thinking 토큰 + 실제 출력 토큰 합산)을 모두 소진해 중간에 잘렸을 "
+            "가능성이 매우 높습니다. GEMINI_MAX_TOKENS를 늘리거나 GEMINI_THINKING_LEVEL을 "
+            "더 낮춰(MINIMAL) 재시도하는 것을 검토하세요."
+        )
+
+    try:
+        full_text = response.text or ""
+    except Exception as exc:  # noqa: BLE001 - 진단 로그 자체가 실패해도 본 로직에 영향 주지 않음
+        print(f"[ai_client] 응답 텍스트 미리보기 생성 실패: {type(exc).__name__}: {exc}")
+        return
+
+    length = len(full_text)
+    print(f"[ai_client] 응답 본문 길이: {length:,}자 (비어있음: {length == 0})")
+
+    if length == 0:
+        print("[ai_client] 응답 본문이 완전히 비어 있습니다 (미리보기 없음).")
+        return
+
+    head = full_text[:DEBUG_PREVIEW_CHARS]
+    tail = full_text[-DEBUG_PREVIEW_CHARS:] if length > DEBUG_PREVIEW_CHARS else ""
+    print(f"[ai_client] 응답 앞부분 미리보기 (최대 {DEBUG_PREVIEW_CHARS}자):\n{head}")
+    if tail:
+        print(f"[ai_client] 응답 뒷부분 미리보기 (마지막 {DEBUG_PREVIEW_CHARS}자):\n{tail}")
 
 
 def generate_text(system_prompt: str, user_prompt: str) -> str:
@@ -114,6 +204,12 @@ def generate_text(system_prompt: str, user_prompt: str) -> str:
     generation_config = genai_types.GenerateContentConfig(
         system_instruction=system_prompt,
         max_output_tokens=config["max_tokens"],
+        thinking_config=genai_types.ThinkingConfig(thinking_level=config["thinking_level"]),
+    )
+
+    print(
+        f"[ai_client] Gemini 호출 설정: model={config['model']}, "
+        f"max_output_tokens={config['max_tokens']}, thinking_level={config['thinking_level']}"
     )
 
     last_error: AIClientError | None = None
@@ -125,6 +221,7 @@ def generate_text(system_prompt: str, user_prompt: str) -> str:
                 contents=user_prompt,
                 config=generation_config,
             )
+            _log_response_debug_info(response)
             return _extract_text(response)
 
         except genai_errors.APIError as exc:
