@@ -28,6 +28,7 @@ Daily Morning Brief 생성 오케스트레이션 스크립트.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import sys
 from datetime import datetime, timedelta
@@ -42,6 +43,10 @@ import validate_report  # noqa: E402
 
 SEOUL_TZ = ZoneInfo("Asia/Seoul")
 REPORT_TITLE_LINE = "# 저축은행 Daily Morning Brief"
+
+# 검증 실패 진단 로그에서 본문 미리보기로 보여줄 최대 글자 수
+# (ai_client.py의 DEBUG_PREVIEW_CHARS와 동일한 값을 사용해 일관성 유지).
+DEBUG_PREVIEW_CHARS = 300
 
 
 class GenerationFailure(RuntimeError):
@@ -178,12 +183,15 @@ def generate_report_markdown(target_date: datetime, system_prompt: str) -> str:
 
     # 후보를 최대 news_fetcher.TOTAL_CANDIDATE_CAP(=30)건으로 이미 줄였고,
     # 뉴스별 작성 분량도 프롬프트(daily_morning_brief.txt) 쪽에서 간결하게
-    # 조정했으므로, 출력 토큰도 과도하게 크게 잡을 필요가 없다. 목표 분량은
-    # 여전히 A4 2~3페이지 수준이며, 이를 담기에 4,500~5,500 토큰 선이면
-    # 충분하다고 보고 기본값을 5,000으로 유지한다. ai_client.py 자체는 건드리지
+    # 조정했지만, 실제 운영 로그에서 입력이 30건 기준 약 28,000토큰까지
+    # 커지는 것이 확인되었고, gemini-3.6-flash가 기본적으로 사용하는 "thinking"
+    # 토큰이 max_output_tokens 예산을 실제 출력 텍스트와 합산해서 소비하는
+    # 문제로 보고서 뒷부분(종합 분석 이후 4개 섹션)이 잘리는 현상이 있었다.
+    # ai_client.py의 기본값을 8000으로 올리고 thinking_level도 LOW로
+    # 낮췄으므로, 여기 기본값도 그와 일치시킨다. ai_client.py 자체는 건드리지
     # 않고, 그 모듈이 읽는 환경변수만 여기서 지정한다(이미 외부에서
     # GEMINI_MAX_TOKENS가 지정된 경우는 그 값을 그대로 존중한다).
-    os.environ.setdefault("GEMINI_MAX_TOKENS", "5000")
+    os.environ.setdefault("GEMINI_MAX_TOKENS", "8000")
 
     print("[generate_brief] 최종 보고서 생성 시작")
     try:
@@ -215,12 +223,41 @@ def write_report_file(path: Path, content: str, force_regenerate: bool) -> None:
 
     if errors:
         tmp_path.unlink(missing_ok=True)
+        _log_validation_failure_debug_info(content, errors)
         raise GenerationFailure(
             "보고서 검증 실패로 파일을 저장하지 않습니다:\n" + "\n".join(f"  - {e}" for e in errors)
         )
 
     tmp_path.replace(path)
     print(f"[generate_brief] 보고서 저장 완료: {path}")
+
+
+def _log_validation_failure_debug_info(content: str, errors: list[str]) -> None:
+    """
+    보고서 검증 실패 시(특히 "필수 섹션 누락") 원인을 진단할 수 있도록,
+    Gemini API 호출 자체는 성공했더라도 실제로 어떤 형식의 텍스트가
+    돌아왔는지 로그에 남긴다. API Key나 개인정보는 포함되지 않는다(보고서
+    본문은 뉴스 요약/분석 텍스트일 뿐이다).
+    """
+    section_errors = [e for e in errors if "필수 섹션 누락" in e]
+    if not section_errors:
+        return
+
+    print("[generate_brief] 검증 실패 진단: 필수 섹션 누락이 감지되었습니다.")
+    print(f"[generate_brief]   - 감지된 문제: {', '.join(section_errors)}")
+
+    # 실제로 어떤 최상위(##) 소제목이 본문에 존재하는지 스캔해서, "아예 안 썼는지"
+    # 와 "썼는데 문구/형식이 달라서 정규식이 못 잡았는지"를 구분할 수 있게 한다.
+    found_headings = re.findall(r"^##(?!#)\s*(.+)$", content, flags=re.MULTILINE)
+    print(f"[generate_brief]   - 본문에서 실제로 발견된 '##' 소제목 목록: {found_headings}")
+
+    length = len(content)
+    print(f"[generate_brief]   - 본문 전체 길이: {length:,}자")
+    tail_preview = content[-DEBUG_PREVIEW_CHARS:] if length > DEBUG_PREVIEW_CHARS else content
+    print(
+        f"[generate_brief]   - 본문 마지막 {min(length, DEBUG_PREVIEW_CHARS)}자 미리보기 "
+        f"(여기서 그대로 잘렸는지 확인):\n{tail_preview}"
+    )
 
 
 def main() -> int:
