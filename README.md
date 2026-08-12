@@ -21,7 +21,7 @@
 ├─ data/reports.json           # 사이트 날짜 목록 생성용 인덱스 (자동 갱신)
 ├─ prompts/daily_morning_brief.txt # 브리핑 작성 프롬프트 (자동화와 분리 관리)
 ├─ scripts/
-│  ├─ ai_client.py             # Claude API 호출 전용 모듈
+│  ├─ ai_client.py             # Gemini API 호출 전용 모듈
 │  ├─ news_fetcher.py          # 뉴스 수집 전용 모듈
 │  ├─ generate_brief.py        # 생성 오케스트레이션 (뉴스 수집 → AI 호출 → 저장 → 검증)
 │  ├─ validate_report.py       # 보고서 검증 (필수 섹션/날짜 일치/최소 길이)
@@ -52,14 +52,15 @@ python3 -m http.server 8000
 ### 자동화 스크립트 로컬 테스트
 
 ```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
-export ANTHROPIC_MODEL="claude-sonnet-4-6"
+export GEMINI_API_KEY="AIza..."
+export GEMINI_MODEL="gemini-3.6-flash"
 export SEARCH_API_URL="https://your-search-api.example.com/search"
 export SEARCH_API_KEY="..."
 
 # 특정 날짜를 기준일로 강제 지정하여 테스트 (지정하지 않으면 "오늘-1일" 사용)
 export TARGET_DATE="2026-08-12"
 
+pip install -r requirements.txt
 python3 scripts/generate_brief.py
 python3 scripts/update_index.py
 python3 scripts/validate_report.py reports/2026/08/2026-08-12.md
@@ -85,14 +86,14 @@ GitHub Pages가 바로 서비스할 수 있습니다.
 
 | 이름 | 필수 여부 | 설명 |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | 필수 | Claude API 호출용 키 |
-| `SEARCH_API_KEY` (또는 `NEWS_API_KEY`) | 필수 | 뉴스/웹 검색 API 키 |
+| `GEMINI_API_KEY` | 필수 | Google Gemini API 호출용 키 |
+| `TAVILY_API_KEY` (또는 `SEARCH_API_KEY`/`NEWS_API_KEY`) | 필수 | 뉴스 검색 API 키 (기본값: Tavily) |
 
 **Variables**(같은 화면의 "Variables" 탭, 비밀값이 아닌 설정값)에는 아래를 등록할 수 있습니다.
 
 | 이름 | 필수 여부 | 설명 |
 |---|---|---|
-| `ANTHROPIC_MODEL` | 선택 | 사용할 Claude 모델명. 미설정 시 `scripts/ai_client.py`의 기본값 사용 |
+| `GEMINI_MODEL` | 선택 | 사용할 Gemini 모델명. 미설정 시 `scripts/ai_client.py`의 기본값(`gemini-3.6-flash`) 사용 |
 | `SEARCH_API_URL` | 필수 | 실제 사용할 뉴스/검색 API의 엔드포인트 URL |
 
 > **API Key는 절대 소스코드나 README에 직접 입력하지 않습니다.**
@@ -100,16 +101,43 @@ GitHub Pages가 바로 서비스할 수 있습니다.
 
 ### ⚠️ 필수 설정 (구현 시 실제 서비스 선택 필요)
 
-명세에서 "최신 뉴스/웹 검색이 가능한 방식"을 요구하지만, 실제로 어떤 검색 API를
-사용할지는 배포자가 계약/보유한 서비스에 따라 달라집니다. 이 프로젝트는
-`scripts/news_fetcher.py`의 `_call_search_api()` 함수 하나만 교체하면 다른 검색
-API(예: 사내 뉴스 API, 특정 포털의 뉴스 검색 API, 서치 API 벤더 등)로 바로
-전환할 수 있도록 추상화되어 있습니다. 배포 전 반드시:
+기본 구현은 **Tavily Search API**(`https://api.tavily.com/search`, `topic="news"`)를
+사용합니다. `TAVILY_API_KEY`(또는 `SEARCH_API_KEY`/`NEWS_API_KEY`) Secret만
+등록하면 별도 코드 수정 없이 바로 동작합니다.
 
-1. 실제 사용할 검색 API를 선택합니다.
-2. `SEARCH_API_URL`, `SEARCH_API_KEY`를 해당 서비스에 맞게 설정합니다.
-3. 응답 스키마가 다르면 `_call_search_api()` 내부의 파싱 로직만 수정합니다
-   (`_normalize_article()` 이후 파이프라인은 수정할 필요가 없습니다).
+다른 검색 API로 교체하고 싶다면 `scripts/news_fetcher.py`의
+`_call_search_api()` 함수 하나만 수정하면 됩니다(이후 정규화/날짜 필터/
+중복 제거/우선순위 정렬 파이프라인은 그대로 재사용됩니다). 배포 전:
+
+1. Tavily를 그대로 쓸지, 다른 검색 API로 교체할지 결정합니다.
+2. `SEARCH_API_URL`(선택, 기본값은 Tavily 엔드포인트), `TAVILY_API_KEY`(또는
+   `SEARCH_API_KEY`)를 설정합니다.
+3. 응답 스키마가 다르면 `_call_search_api()`의 반환값 파싱 부분만 수정합니다.
+
+### 뉴스 수집 방식 (v2 — 밀도 개선)
+
+과거 버전은 토픽 12개를 각각 1회씩만 검색하여 최종 뉴스가 2건 수준으로
+지나치게 적었습니다. 현재 버전은 **7개 대분류(저축은행/국내금융정책/경제/
+금리/환율/증시/국제) x 대분류별 다수의 세부 검색어(총 55개 검색어)**로
+넓게 검색한 뒤, 다음 순서로 처리합니다.
+
+```
+검색 후보 수집 (검색어당 최대 6건, 총 최대 300여 건)
+  → 날짜 필터 (Asia/Seoul 전일 00:00~23:59:59, Tavily의 days 파라미터 +
+     파이썬 내부 필터 이중 검증. 날짜 확인 불가 기사는 제외)
+  → 정규화 (제목/URL/출처/날짜/요약)
+  → 중복 제거 (URL 기준 1차 → 정규화된 제목 기준 2차, 동일 이슈 다중 출처는 병기)
+  → 출처 우선순위 정렬 (공식기관 > 주요 언론 > 기타)
+  → 카테고리별 상한 적용 (카테고리당 최대 15건)
+  → AI에게 카테고리별로 정리된 후보 전달 (목표 20건 이상, 권장 30~50건)
+  → AI가 우선순위 기준에 따라 최종 6~10건 선정 및 심층 분석 작성
+```
+
+후보가 목표치(20건)에 못 미치면 로그에 경고를 남기지만 자동화를 실패
+처리하지는 않습니다 — 실제로 뉴스가 적은 날일 수 있기 때문입니다. 이 경우
+프롬프트가 AI에게 해당 분야를 "중요 신규 이슈 없음"으로 작성하도록
+안내합니다. 뉴스를 지어내서 분량을 채우는 것은 프롬프트에서 명시적으로
+금지되어 있습니다.
 
 ---
 
@@ -127,16 +155,17 @@ API(예: 사내 뉴스 API, 특정 포털의 뉴스 검색 API, 서치 API 벤�
 
 1. 저장소 checkout
 2. Python 3.12 설치
-3. 필수 Secret 존재 확인 (없으면 즉시 실패)
-4. `scripts/generate_brief.py` 실행
+3. 의존성 설치 (`pip install -r requirements.txt` — Gemini 공식 SDK `google-genai`)
+4. 필수 Secret 존재 확인 (없으면 즉시 실패)
+5. `scripts/generate_brief.py` 실행
    - 기준일 계산 (기본: 실행일 - 1일, Asia/Seoul)
    - 해당 날짜 보고서가 이미 있으면 **skip** (중복 생성 방지)
    - 전일 뉴스 수집 (`news_fetcher.py`)
-   - Claude API 호출하여 보고서 생성 (`ai_client.py` + `prompts/daily_morning_brief.txt`)
+   - Gemini API 호출하여 보고서 생성 (`ai_client.py` + `prompts/daily_morning_brief.txt`)
    - 생성 결과를 **검증 통과한 경우에만** `reports/YYYY/MM/YYYY-MM-DD.md`로 저장
-5. `scripts/update_index.py` 실행 → `data/reports.json` 재생성
-6. 변경사항이 있을 때만 commit & push
-7. GitHub Pages가 자동으로 재배포
+6. `scripts/update_index.py` 실행 → `data/reports.json` 재생성
+7. 변경사항이 있을 때만 commit & push
+8. GitHub Pages가 자동으로 재배포
 
 ### 실패 처리
 
@@ -145,7 +174,7 @@ API(예: 사내 뉴스 API, 특정 포털의 뉴스 검색 API, 서치 API 벤�
 
 - API Key(Secret) 없음
 - 뉴스 수집 전면 실패
-- Claude API 호출 실패 / 응답 없음
+- Gemini API 호출 실패 / 응답 없음
 - 보고서 검증 실패 (필수 섹션 누락, 날짜 불일치, 빈 문서, 최소 길이 미달, 코드블록 혼입 등)
 
 ---
@@ -177,10 +206,10 @@ API(예: 사내 뉴스 API, 특정 포털의 뉴스 검색 API, 서치 API 벤�
 1. **Actions 탭에서 실패한 워크플로우 로그를 확인합니다.**
    각 단계(환경변수 확인 / 생성 / 검증 / 커밋)가 어디서 실패했는지 로그에 명시됩니다.
 2. **"필수 환경변수 확인" 단계에서 실패한 경우**: Secrets 설정을 다시 확인합니다
-   (`ANTHROPIC_API_KEY`, `SEARCH_API_KEY`).
+   (`GEMINI_API_KEY`, `SEARCH_API_KEY`).
 3. **"Daily Morning Brief 생성" 단계에서 실패한 경우**:
    - 뉴스 수집 실패: `SEARCH_API_URL`이 올바른지, 검색 API가 정상 응답하는지 확인합니다.
-   - AI 호출 실패: Claude API 키/모델명/요금 한도를 확인합니다.
+   - AI 호출 실패: Gemini API 키/모델명/요금 한도(quota)를 확인합니다.
    - 보고서 검증 실패: 로그에 출력된 누락 섹션/날짜 불일치 등의 사유를 확인합니다.
 4. **사이트에 새 보고서가 안 보이는 경우**:
    - `data/reports.json`이 최신 커밋에 반영되었는지 확인합니다.
