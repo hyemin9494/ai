@@ -92,31 +92,60 @@ def load_prompt(repo_root: Path) -> str:
 
 
 def format_news_for_prompt(articles: list[dict]) -> str:
-    if not articles:
-        return "(수집된 뉴스가 없습니다. 각 분야는 '중요 신규 이슈 없음'으로 작성하세요.)"
+    """
+    카테고리별로 후보 뉴스를 그룹핑하여 정리한다. 각 카테고리 헤더에는
+    "주요 뉴스 브리핑"의 어느 하위 소제목에 대응하는지 함께 표기하여,
+    AI가 최종 보고서의 6개 하위 카테고리(저축은행 핵심 이슈/국내 금융정책/
+    경제/금리·환율/증시/국제)에 곧바로 매핑할 수 있도록 한다.
 
-    lines = []
-    for i, article in enumerate(articles, start=1):
-        lines.append(
-            f"{i}. 제목: {article['title']}\n"
-            f"   출처: {article['source']}\n"
-            f"   날짜: {article['published_at']}\n"
-            f"   URL: {article['url']}\n"
-            f"   요약: {article['summary']}"
-        )
-    return "\n".join(lines)
+    후보가 전혀 없는 카테고리는 "(해당 분야 수집된 후보 없음 → 중요 신규
+    이슈 없음으로 작성)"이라고 명시하여, AI가 뉴스를 지어내지 않도록 한다.
+    """
+    if not articles:
+        return "(수집된 뉴스 후보가 전혀 없습니다. 모든 분야를 '중요 신규 이슈 없음'으로 작성하세요.)"
+
+    by_category: dict[str, list[dict]] = {cat: [] for cat in news_fetcher.CATEGORY_PRIORITY_ORDER}
+    for article in articles:
+        by_category.setdefault(article.get("category", "기타"), []).append(article)
+
+    blocks = []
+    for category in news_fetcher.CATEGORY_PRIORITY_ORDER:
+        section_name = news_fetcher.CATEGORY_TO_REPORT_SECTION.get(category, category)
+        cat_articles = by_category.get(category, [])
+        header = f"[{category} — 보고서 소제목: '{section_name}']"
+
+        if not cat_articles:
+            blocks.append(f"{header}\n(해당 분야 수집된 후보 없음 → 중요 신규 이슈 없음으로 작성)")
+            continue
+
+        lines = [header]
+        for i, article in enumerate(cat_articles, start=1):
+            lines.append(
+                f"  {i}. 제목: {article['title']}\n"
+                f"     출처: {article['source']}\n"
+                f"     날짜: {article['published_at']}\n"
+                f"     URL: {article['url']}\n"
+                f"     요약: {article['summary']}"
+            )
+        blocks.append("\n".join(lines))
+
+    return "\n\n".join(blocks)
 
 
 def build_user_prompt(target_date: datetime, articles: list[dict]) -> str:
     date_str = target_date.strftime("%Y-%m-%d")
     news_block = format_news_for_prompt(articles)
+    total_count = len(articles)
     return (
         f"오늘 작성해야 할 보고서의 기준일은 {date_str} 입니다 (Asia/Seoul, 전일 00:00~24:00 뉴스 기준).\n\n"
-        f"아래는 수집된 전일 뉴스 목록입니다 (출처 우선순위 및 중복 제거가 이미 적용됨):\n\n"
+        f"아래는 뉴스 수집 파이프라인(7개 분야 x 다수 검색어 → 날짜 필터 → 출처 우선순위 → "
+        f"중복 제거)을 거쳐 확보한 총 {total_count}건의 후보 뉴스입니다. 분야별로 정리되어 있습니다:\n\n"
         f"{news_block}\n\n"
-        f"위 뉴스만 근거로 사용하여, 시스템 프롬프트의 작성 요구사항을 그대로 따르는 "
-        f"Daily Morning Brief를 Markdown으로 작성하세요. "
-        f"문서 최상단은 반드시 다음 두 줄로 시작해야 합니다:\n"
+        f"위 후보 목록 안에 있는 뉴스와 사실만 근거로 사용하세요. 후보에 없는 뉴스, 확인되지 않은 "
+        f"수치나 발표를 만들어내지 마세요. 이 후보들 중에서 시스템 프롬프트의 선정 기준과 우선순위에 "
+        f"따라 최종 6~10건(실제로 중요한 뉴스가 부족하면 그 미만도 가능)을 선정하고, 시스템 프롬프트의 "
+        f"'5. 보고서 구성'에 정의된 형식과 소제목을 정확히 따라 Daily Morning Brief를 Markdown으로 "
+        f"작성하세요. 문서 최상단은 반드시 다음 두 줄로 시작해야 합니다:\n"
         f"{REPORT_TITLE_LINE}\n\n**기준일: {date_str}**"
     )
 
@@ -127,7 +156,15 @@ def generate_report_markdown(target_date: datetime, system_prompt: str) -> str:
     except news_fetcher.NewsFetchError as exc:
         raise GenerationFailure(f"뉴스 수집 실패: {exc}") from exc
 
+    print(f"[generate_brief] 뉴스 후보 {len(articles)}건을 프롬프트에 포함합니다.")
+
     user_prompt = build_user_prompt(target_date, articles)
+
+    # 목표 분량(A4 2~3페이지, 6~10건 뉴스 각각 다수 문장 분석)을 담으려면
+    # 기존 기본값(4096 토큰)으로는 부족할 수 있다. ai_client.py 자체는 건드리지
+    # 않고, 그 모듈이 읽는 환경변수를 여기서 상향 지정한다(이미 외부에서
+    # ANTHROPIC_MAX_TOKENS가 지정된 경우는 그 값을 존중한다).
+    os.environ.setdefault("ANTHROPIC_MAX_TOKENS", "8000")
 
     try:
         markdown_text = ai_client.generate_text(system_prompt, user_prompt)
