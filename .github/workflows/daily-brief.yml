@@ -21,7 +21,7 @@ name: Daily Morning Brief 자동 생성
 # =============================================================================
 on:
   schedule:
-    - cron: "45 22 * * *"
+    - cron: '23 22 * * 1-5'
   workflow_dispatch:
     inputs:
       force_regenerate:
