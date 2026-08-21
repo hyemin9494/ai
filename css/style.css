@@ -309,7 +309,7 @@ main.container {
    자연스럽게 항목이 나뉘고, 화면 전체를 가로지르는 굵은 선은 사용하지 않는다. */
 .report-body ul + h4 {
   margin-top: 1px;
-  padding-top: 18px;
+  padding-top: 15px;
 }
 
 /* Executive Summary / 종합 분석 강조 박스 (js/main.js가 텍스트 변경 없이
