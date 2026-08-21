@@ -457,10 +457,8 @@ main.container {
     padding: 12px 14px;
   }
 /* 핵심 결론 화면에서 숨김 */
-   .report-body h2:last-of-type {
-      display:none;
-   }
-   .report-body h2:last-of-type ~ * {
+   .report-body h2:nth-of-type(7),
+   .report-body h2:nth-of-type(7) ~ * {
       display:none;
    }
 }
