@@ -456,4 +456,11 @@ main.container {
   .date-item a {
     padding: 12px 14px;
   }
+/* 핵심 결론 화면에서 숨김 */
+   .report-body h2:last-of-type {
+      display:none;
+   }
+   .report-body h2:last-of-type ~ * {
+      display:none;
+   }
 }
