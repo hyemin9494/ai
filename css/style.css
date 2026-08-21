@@ -101,6 +101,12 @@ button:focus-visible {
   text-align: center;
 }
 
+.site-footer p.footer-auto-notice {
+  margin-top: 6px;
+  font-size: 0.72rem;
+  color: var(--gray-500);
+}
+
 main.container {
   padding-top: 28px;
   padding-bottom: 16px;
@@ -286,6 +292,50 @@ main.container {
   margin: 18px 0 8px;
 }
 
+.report-body h4 {
+  font-size: 0.98rem;
+  font-weight: 700;
+  color: var(--navy-900);
+  margin: 0 0 8px;
+}
+
+/* 뉴스 항목 구분: 카드로 감싸지 않고, "이전 뉴스의 목록(ul) 다음에 오는
+   제목(h4)"에만 얇고 연한 회색 구분선을 준다. 같은 h3 카테고리 안에서만
+   자연스럽게 항목이 나뉘고, 화면 전체를 가로지르는 굵은 선은 사용하지 않는다. */
+.report-body ul + h4 {
+  margin-top: 22px;
+  padding-top: 22px;
+  border-top: 1px solid var(--gray-100);
+}
+
+/* Executive Summary / 종합 분석 강조 박스 (js/main.js가 텍스트 변경 없이
+   기존 요소를 이 안으로 옮겨 담는다) */
+.report-highlight-panel {
+  background: #eef3f9;
+  border: 1px solid #cfe0f2;
+  border-left: 4px solid var(--navy-accent);
+  border-radius: 3px;
+  padding: 16px 18px;
+  margin: 0 0 16px;
+}
+.report-highlight-panel p:last-child { margin-bottom: 0; }
+
+/* 핵심 결론 강조 박스 */
+.report-conclusion-panel {
+  background: var(--white);
+  border: 1px solid var(--gray-300);
+  border-top: 3px solid var(--navy-900);
+  border-radius: 3px;
+  padding: 16px 18px;
+  margin: 0 0 8px;
+}
+.report-conclusion-panel p:last-child { margin-bottom: 0; }
+
+/* 중요도 ★ 색상 강조 (기존 값을 그대로 색으로만 구분, 새 판단값 아님) */
+.stars-3 { color: var(--danger); font-weight: 700; }
+.stars-2 { color: #a15c00; font-weight: 700; }
+.stars-1 { color: var(--navy-700); font-weight: 700; }
+
 .report-body p {
   margin: 0 0 12px;
   color: var(--text-dark);
@@ -303,6 +353,39 @@ main.container {
 
 .report-body li {
   margin-bottom: 6px;
+}
+
+/* 리스크관리 체크포인트: 번호를 원형 배지로 표시 (항목 개수·문구는 그대로).
+   위 ".report-body ul, .report-body ol" 공통 규칙보다 뒤에 두어
+   ol에 대해서만 우선 적용되도록 한다. */
+.report-body ol {
+  list-style: none;
+  counter-reset: risk-item;
+  padding-left: 0;
+}
+.report-body ol > li {
+  counter-increment: risk-item;
+  position: relative;
+  padding: 8px 0 8px 34px;
+  margin-bottom: 0;
+  border-bottom: 1px dashed var(--gray-100);
+}
+.report-body ol > li:last-child { border-bottom: none; }
+.report-body ol > li::before {
+  content: counter(risk-item);
+  position: absolute;
+  left: 0;
+  top: 7px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--navy-800);
+  color: var(--white);
+  font-size: 0.72rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .report-body table {
