@@ -189,6 +189,67 @@
     });
   }
 
+  /**
+   * 아래 두 함수는 렌더링된 DOM을 "재배치·재포장"만 할 뿐, 텍스트 노드의
+   * 내용을 새로 만들거나 수정하지 않는다 (보고서 데이터/문구는 100% 그대로).
+   * 목적은 PDF 스타일 디자인(강조 박스, 중요도 색상)을 순수 표시 계층에서
+   * 구현하는 것이며, marked.js가 생성한 일반 HTML(h1~h4, p, ul, ol)만으로는
+   * CSS만으로 표현할 수 없는 두 가지(① 여러 형제 요소를 하나의 박스로 감싸기,
+   * ② 텍스트 중 "★" 부분만 색상 강조)를 보완한다.
+   */
+
+  // Executive Summary / 종합 분석 / 핵심 결론 섹션을, 텍스트 변경 없이
+  // 강조 박스(div)로 감싼다. 다음 h2가 나올 때까지의 형제 요소들을 그대로
+  // 옮겨 담을 뿐, 요소 자체나 텍스트를 새로 만들지 않는다.
+  var HIGHLIGHT_PANEL_HEADINGS = {
+    "Executive Summary": "report-highlight-panel",
+    "종합 분석": "report-highlight-panel",
+    "핵심 결론": "report-conclusion-panel"
+  };
+
+  function wrapHighlightSections(root) {
+    var headings = root.querySelectorAll("h2");
+    headings.forEach(function (h2) {
+      var panelClass = HIGHLIGHT_PANEL_HEADINGS[h2.textContent.trim()];
+      if (!panelClass) return;
+
+      var toMove = [];
+      var node = h2.nextElementSibling;
+      while (node && node.tagName !== "H2") {
+        toMove.push(node);
+        node = node.nextElementSibling;
+      }
+      if (toMove.length === 0) return;
+
+      var wrapper = document.createElement("div");
+      wrapper.className = panelClass;
+      toMove.forEach(function (el) {
+        wrapper.appendChild(el); // 기존 요소를 그대로 이동 (복제/재작성 아님)
+      });
+      h2.insertAdjacentElement("afterend", wrapper);
+    });
+  }
+
+  // "중요도: ★★★" 같은 기존 텍스트에서 "★" 연속 구간만 색상 span으로
+  // 감싼다. 별표 개수나 문자 자체는 절대 바꾸지 않고, 이미 존재하는 값을
+  // 시각적으로만 강조한다 (새로운 판단값을 만들지 않음).
+  function colorizeStarRatings(root) {
+    var items = root.querySelectorAll("li");
+    items.forEach(function (li) {
+      if (li.querySelector(".stars-1, .stars-2, .stars-3")) return;
+      if (li.textContent.indexOf("★") === -1) return;
+      li.innerHTML = li.innerHTML.replace(/★+/, function (stars) {
+        var cls = stars.length >= 3 ? "stars-3" : stars.length === 2 ? "stars-2" : "stars-1";
+        return '<span class="' + cls + '">' + stars + "</span>";
+      });
+    });
+  }
+
+  function enhanceReportPresentation(root) {
+    wrapHighlightSections(root);
+    colorizeStarRatings(root);
+  }
+
   function renderReportPage() {
     var root = document.getElementById("report-root");
     var statusEl = document.getElementById("status-message");
@@ -244,6 +305,7 @@
           var bodyDiv = document.createElement("div");
           bodyDiv.className = "report-body";
           bodyDiv.innerHTML = renderMarkdown(mdText);
+          enhanceReportPresentation(bodyDiv); // 표시 전용 재포장 (데이터/텍스트 변경 없음)
           docDiv.appendChild(bodyDiv);
 
           wrapper.appendChild(docDiv);
