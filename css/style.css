@@ -301,7 +301,7 @@ main.container {
   font-size: 0.98rem;
   font-weight: 700;
   color: var(--navy-900);
-  margin: 1 0 0px;
+  margin: 0 0 5px;
 }
 
 /* 뉴스 항목 구분: 카드로 감싸지 않고, "이전 뉴스의 목록(ul) 다음에 오는
