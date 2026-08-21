@@ -292,6 +292,11 @@ main.container {
   margin: 18px 0 8px;
 }
 
+.report-body h3:not(:first-of-type) {
+  border-top: 1px solid var(--gray-300);
+  padding-top: 18px;
+}
+
 .report-body h4 {
   font-size: 0.98rem;
   font-weight: 700;
