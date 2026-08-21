@@ -301,7 +301,7 @@ main.container {
   font-size: 0.98rem;
   font-weight: 700;
   color: var(--navy-900);
-  margin: 0 0 8px 12px;
+  margin: 0 0 8px;
 }
 
 /* 뉴스 항목 구분: 카드로 감싸지 않고, "이전 뉴스의 목록(ul) 다음에 오는
@@ -310,7 +310,6 @@ main.container {
 .report-body ul + h4 {
   margin-top: 22px;
   padding-top: 22px;
-  border-top: 1px solid var(--gray-100);
 }
 
 /* Executive Summary / 종합 분석 강조 박스 (js/main.js가 텍스트 변경 없이
