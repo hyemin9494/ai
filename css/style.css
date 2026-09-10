@@ -286,11 +286,6 @@ main.container {
   border-left: 4px solid var(--navy-accent);
 }
 
-.report-body h2:nth-of-type(4) {
-  border-top: 3px solid var(--gray-900);
-  padding-top: 12px;
-}
-
 .report-body h3 {
   font-size: 1.05rem;
   color: var(--navy-700);
@@ -460,6 +455,18 @@ main.container {
   .date-item a {
     padding: 12px 14px;
   }
+}
+
+/* 종합분석 시작 구분선 */
+.report-body h2:has(+ . report-highlight-panel) {
+   border-top: 3px solid var(--navy-900);
+   padding-top: 12px;
+}
+
+/* 임원요약에는 적용하지 않음 */
+.report-body h2:first-of-type:has(+ .report-highlight-panel) {
+   border-top: none;
+   padding-top: 0;
 }
 
 /* 핵심 결론 화면에서 숨김 */
