@@ -457,18 +457,6 @@ main.container {
   }
 }
 
-/* 종합분석 시작 구분선 */
-.report-body h2:has(+ . report-highlight-panel) {
-   border-top: 3px solid var(--navy-900);
-   padding-top: 12px;
-}
-
-/* 임원요약에는 적용하지 않음 */
-.report-body h2:first-of-type:has(+ .report-highlight-panel) {
-   border-top: none;
-   padding-top: 0;
-}
-
 /* 핵심 결론 화면에서 숨김 */
 .report-body > h2:last-of-type {
    display: none !important;
