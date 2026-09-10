@@ -460,7 +460,7 @@ main.container {
 /* 종합 분석 구분선 */
 .report-body > h2:not(:first-of-type):has(+ .report-highlight-panel) {
    border-top: 3px solid var(--navy-900);
-   padding-top: 12px;
+   padding-top: 24px;
 }
 
 /* 핵심 결론 화면에서 숨김 */
