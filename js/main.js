@@ -246,25 +246,8 @@
   }
 
   function enhanceReportPresentation(root) {
-    var headings = root.querySelectorAll("h2");
-
-    headings.forEach(function (h2) {
-      if (h2.textcontent.trim() !== "핵심결론") return;
-
-      // 제목부터 다음 h2 직전까지 전부 숨김
-      h2.style.display = "none";
-
-      var node = h2.nextElementSibling;
-      while (node && node.tagName !== "H2") {
-        node.style.display = "none";
-        node = node.nextElementSibling;
-      }
-    }};
-}
-   function enhanceReportPresentation(root) {
     wrapHighlightSections(root);
     colorizeStarRatings(root);
-    hideConclusionSection(root);
   }
 
   function renderReportPage() {
