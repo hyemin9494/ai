@@ -459,9 +459,18 @@ main.container {
 
 /* 종합 분석 구분선 */
 .report-body > h2:not(:first-of-type):has(+ .report-highlight-panel) {
-   border-top: 3px solid var(--navy-900);
-   padding-top: 12px;
-   padding-left: 16px;
+  border-top: 0;
+  position: relative;
+}
+
+.report-body > h2:not(:first-of-type):has(+ .report-highlight-panel)::before {
+  content: "";
+  position: absolute;
+  top: -16px;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--navy-900);
 }
 
 /* 핵심 결론 화면에서 숨김 */
