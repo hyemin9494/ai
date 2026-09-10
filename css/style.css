@@ -459,7 +459,7 @@ main.container {
 .report-body h2:has(+ .report-conclusion-panel) {
    display: none !important;
 }
-.report-conclusion-panel {
+.report-body .report-conclusion-panel {
    display: none !important;
    }
 }
