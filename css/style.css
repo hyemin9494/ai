@@ -455,11 +455,12 @@ main.container {
   .date-item a {
     padding: 12px 14px;
   }
+}
+
 /* 핵심 결론 화면에서 숨김 */
-.report-body h2:has(+ .report-conclusion-panel) {
+.report-body > h2:last-of-type {
    display: none !important;
 }
-.report-body .report-conclusion-panel {
+.report-body > .report-conclusion-panel {
    display: none !important;
    }
-}
