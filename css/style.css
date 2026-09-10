@@ -456,27 +456,3 @@ main.container {
     padding: 12px 14px;
   }
 }
-
-/* 종합 분석 구분선 */
-.report-body > h2:not(:first-of-type):has(+ .report-highlight-panel) {
-  border-top: 0;
-  position: relative;
-}
-
-.report-body > h2:not(:first-of-type):has(+ .report-highlight-panel)::before {
-  content: "";
-  position: absolute;
-  top: -24px;
-  left: 0;
-  right: 0;
-  height: 3px;
-  background: var(--navy-900);
-}
-
-/* 핵심 결론 화면에서 숨김 */
-.report-body > h2:last-of-type {
-   display: none !important;
-}
-.report-body > .report-conclusion-panel {
-   display: none !important;
-   }
