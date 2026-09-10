@@ -466,7 +466,7 @@ main.container {
 .report-body > h2:not(:first-of-type):has(+ .report-highlight-panel)::before {
   content: "";
   position: absolute;
-  top: -16px;
+  top: -24px;
   left: 0;
   right: 0;
   height: 3px;
