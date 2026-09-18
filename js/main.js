@@ -99,7 +99,6 @@
         });
 
         var frag = document.createDocumentFragment();
-        var firstMonthMarked = false; // 전체 목록 중 가장 최근 월인지 판별용 (기본 펼침 상태 결정)
 
         years.forEach(function (yearEntry) {
           var yearSection = document.createElement("section");
@@ -114,51 +113,13 @@
             var monthDiv = document.createElement("div");
             monthDiv.className = "month-group";
 
-            // 전체 연/월 중 가장 처음 만나는 월(=최신 월)만 기본 펼침, 나머지는 기본 접힘.
-            var isExpandedByDefault = !firstMonthMarked;
-            firstMonthMarked = true;
-
-            var listId = "month-list-" + yearEntry.year + "-" + monthEntry.month;
-
             var monthHeading = document.createElement("h3");
             monthHeading.className = "month-heading";
-
-            var monthToggle = document.createElement("button");
-            monthToggle.type = "button";
-            monthToggle.className = "month-toggle";
-            monthToggle.setAttribute("aria-expanded", isExpandedByDefault ? "true" : "false");
-            monthToggle.setAttribute("aria-controls", listId);
-
-            var toggleIcon = document.createElement("span");
-            toggleIcon.className = "month-toggle-icon";
-            toggleIcon.setAttribute("aria-hidden", "true");
-            toggleIcon.textContent = isExpandedByDefault ? "▼" : "▶";
-
-            var toggleLabel = document.createElement("span");
-            toggleLabel.className = "month-toggle-label";
-            toggleLabel.textContent = parseInt(monthEntry.month, 10) + "월";
-
-            monthToggle.appendChild(toggleIcon);
-            monthToggle.appendChild(toggleLabel);
-            monthHeading.appendChild(monthToggle);
+            monthHeading.textContent = parseInt(monthEntry.month, 10) + "월";
             monthDiv.appendChild(monthHeading);
 
             var list = document.createElement("ul");
             list.className = "date-list";
-            list.id = listId;
-            if (!isExpandedByDefault) {
-              list.hidden = true;
-              monthDiv.classList.add("month-group--collapsed");
-            }
-
-            monthToggle.addEventListener("click", function () {
-              var expanded = monthToggle.getAttribute("aria-expanded") === "true";
-              var nextExpanded = !expanded;
-              monthToggle.setAttribute("aria-expanded", String(nextExpanded));
-              toggleIcon.textContent = nextExpanded ? "▼" : "▶";
-              list.hidden = !nextExpanded;
-              monthDiv.classList.toggle("month-group--collapsed", !nextExpanded);
-            });
 
             monthEntry.dates.forEach(function (d) {
               var li = document.createElement("li");
@@ -205,8 +166,30 @@
     return div.innerHTML;
   }
 
+  // 이 보고서는 임원 보고용 금융 문서이며, 취소선(~~텍스트~~ → <del>)이
+  // 의도적으로 쓰일 일이 없다. 하지만 marked.js는 GFM 표준에 따라 원문에
+  // 이중 물결(~~)이 포함되면 이를 취소선으로 해석해버린다(단일 물결 "~"는
+  // 범위 표시로 흔히 쓰이며 영향 없음 — 실제로 재현 확인함). 원문 마크다운
+  // 데이터나 생성 프롬프트를 건드리지 않고, 렌더링 단계에서만 <del> 래핑을
+  // 하지 않도록(안의 텍스트는 그대로 표시) marked의 renderer를 재정의한다.
+  // 한 번만 등록하면 되므로 renderMarkdown 최초 호출 전에 설정한다.
+  var markedDelRendererConfigured = false;
+  function configureMarkedRendererOnce() {
+    if (markedDelRendererConfigured) return;
+    if (!window.marked || typeof window.marked.use !== "function") return;
+    window.marked.use({
+      renderer: {
+        del: function (text) {
+          return text; // <del> 태그로 감싸지 않고 텍스트만 그대로 반환
+        }
+      }
+    });
+    markedDelRendererConfigured = true;
+  }
+
   function renderMarkdown(mdText) {
     if (window.marked && typeof window.marked.parse === "function") {
+      configureMarkedRendererOnce();
       return window.marked.parse(mdText, { headerIds: false, mangle: false });
     }
     // Fallback: no markdown library available (e.g. offline / CDN blocked).
