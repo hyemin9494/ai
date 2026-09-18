@@ -166,13 +166,32 @@
     return div.innerHTML;
   }
 
-  // 이 보고서는 임원 보고용 금융 문서이며, 취소선(~~텍스트~~ → <del>)이
-  // 의도적으로 쓰일 일이 없다. 하지만 marked.js는 GFM 표준에 따라 원문에
-  // 이중 물결(~~)이 포함되면 이를 취소선으로 해석해버린다(단일 물결 "~"는
-  // 범위 표시로 흔히 쓰이며 영향 없음 — 실제로 재현 확인함). 원문 마크다운
-  // 데이터나 생성 프롬프트를 건드리지 않고, 렌더링 단계에서만 <del> 래핑을
-  // 하지 않도록(안의 텍스트는 그대로 표시) marked의 renderer를 재정의한다.
-  // 한 번만 등록하면 되므로 renderMarkdown 최초 호출 전에 설정한다.
+  // 이 보고서는 임원 보고용 금융 문서이며, 취소선(GFM의 ~~텍스트~~ → <del>)이
+  // 의도적으로 쓰일 일이 없다.
+  //
+  // [중요] 처음에는 "이중 물결(~~)만 위험하고 단일 물결(~)은 범위 표시라
+  // 안전하다"고 판단해 marked의 renderer.del만 재정의했었다. 그런데 실제
+  // marked.js 동작을 다시 검증한 결과, 이 라이브러리는 물결표 1개만으로도
+  // 취소선 구분자로 인식하며, 문서 안에 물결표가 있는 범위 표현이 2번 이상
+  // 나오면(예: "4~7건"과 "1~2문장"이 같은 문단에 함께 있는 경우) 서로 다른
+  // 두 표현의 물결표끼리 짝지어져 그 "사이"에 있는 모든 텍스트가 사라지는
+  // 심각한 문제가 있음을 재현으로 확인했다. renderer.del 재정의만으로는
+  // 이 손실을 막을 수 없다(물결표가 이미 구분자로 소비된 뒤이기 때문).
+  //
+  // 그래서 근본적인 해결책으로, marked에 넘기기 "직전"에 원문 텍스트의
+  // 물결표를 전부 백슬래시로 이스케이프(~  ->  \~)해서 marked의 인라인
+  // 토크나이저가 물결표를 아예 구분자로 인식하지 못하게 만든다. 백슬래시
+  // 이스케이프는 CommonMark 표준 문법이며, 렌더링 결과에서는 원래의 "~"
+  // 문자 그대로 보이고 텍스트 손실도 없다(실제 재현 검증 완료). 이 프로젝트의
+  // 출력 형식 규칙상 AI가 코드블록을 쓰지 않으므로(물결표 코드펜스 ~~~ 같은
+  // 다른 용도로 쓰일 일이 없음), 물결표를 전부 이스케이프해도 안전하다.
+  //
+  // renderer.del 재정의는 혹시 모를 예외 상황에 대비해 그대로 남겨둔다
+  // (물결표 이스케이프 후에는 실행될 일이 없지만, 있어도 해가 없다).
+  function escapeTildesForMarked(mdText) {
+    return mdText.replace(/~/g, "\\~");
+  }
+
   var markedDelRendererConfigured = false;
   function configureMarkedRendererOnce() {
     if (markedDelRendererConfigured) return;
@@ -190,7 +209,7 @@
   function renderMarkdown(mdText) {
     if (window.marked && typeof window.marked.parse === "function") {
       configureMarkedRendererOnce();
-      return window.marked.parse(mdText, { headerIds: false, mangle: false });
+      return window.marked.parse(escapeTildesForMarked(mdText), { headerIds: false, mangle: false });
     }
     // Fallback: no markdown library available (e.g. offline / CDN blocked).
     // Show as preformatted text so content is never lost.
