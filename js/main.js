@@ -99,6 +99,7 @@
         });
 
         var frag = document.createDocumentFragment();
+        var firstMonthMarked = false; // 전체 목록 중 가장 최근 월인지 판별용 (기본 펼침 상태 결정)
 
         years.forEach(function (yearEntry) {
           var yearSection = document.createElement("section");
@@ -113,13 +114,51 @@
             var monthDiv = document.createElement("div");
             monthDiv.className = "month-group";
 
+            // 전체 연/월 중 가장 처음 만나는 월(=최신 월)만 기본 펼침, 나머지는 기본 접힘.
+            var isExpandedByDefault = !firstMonthMarked;
+            firstMonthMarked = true;
+
+            var listId = "month-list-" + yearEntry.year + "-" + monthEntry.month;
+
             var monthHeading = document.createElement("h3");
             monthHeading.className = "month-heading";
-            monthHeading.textContent = parseInt(monthEntry.month, 10) + "월";
+
+            var monthToggle = document.createElement("button");
+            monthToggle.type = "button";
+            monthToggle.className = "month-toggle";
+            monthToggle.setAttribute("aria-expanded", isExpandedByDefault ? "true" : "false");
+            monthToggle.setAttribute("aria-controls", listId);
+
+            var toggleIcon = document.createElement("span");
+            toggleIcon.className = "month-toggle-icon";
+            toggleIcon.setAttribute("aria-hidden", "true");
+            toggleIcon.textContent = isExpandedByDefault ? "▼" : "▶";
+
+            var toggleLabel = document.createElement("span");
+            toggleLabel.className = "month-toggle-label";
+            toggleLabel.textContent = parseInt(monthEntry.month, 10) + "월";
+
+            monthToggle.appendChild(toggleIcon);
+            monthToggle.appendChild(toggleLabel);
+            monthHeading.appendChild(monthToggle);
             monthDiv.appendChild(monthHeading);
 
             var list = document.createElement("ul");
             list.className = "date-list";
+            list.id = listId;
+            if (!isExpandedByDefault) {
+              list.hidden = true;
+              monthDiv.classList.add("month-group--collapsed");
+            }
+
+            monthToggle.addEventListener("click", function () {
+              var expanded = monthToggle.getAttribute("aria-expanded") === "true";
+              var nextExpanded = !expanded;
+              monthToggle.setAttribute("aria-expanded", String(nextExpanded));
+              toggleIcon.textContent = nextExpanded ? "▼" : "▶";
+              list.hidden = !nextExpanded;
+              monthDiv.classList.toggle("month-group--collapsed", !nextExpanded);
+            });
 
             monthEntry.dates.forEach(function (d) {
               var li = document.createElement("li");
