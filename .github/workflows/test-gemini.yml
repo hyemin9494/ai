@@ -1,0 +1,28 @@
+name: Gemini 연결 테스트
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 저장소 checkout
+        uses: actions/checkout@v5
+
+      - name: Python 설치
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Gemini SDK 설치
+        run: |
+          pip install google-genai
+
+      - name: Gemini 연결 테스트
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+        run: |
+          python test_gemini.py
