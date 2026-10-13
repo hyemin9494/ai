@@ -233,6 +233,7 @@ def generate_text(system_prompt: str, user_prompt: str) -> str:
                 f"Gemini API 오류 (시도 {attempt}/{config['max_retries']}): "
                 f"{status_code} {message}"
             )
+            print(f"[ai_client] {last_error}")
             if status_code in NON_RETRYABLE_STATUS_CODES:
                 # 인증 오류(401/403) / 잘못된 요청(400) / 모델 없음(404)은
                 # 재시도해도 결과가 바뀌지 않으므로 즉시 중단한다.
