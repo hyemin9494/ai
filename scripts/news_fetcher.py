@@ -226,6 +226,16 @@ def _guess_source_from_url(url: str) -> str | None:
     return None
 
 
+def _is_naver_blog_url(url: str) -> bool:
+    """네이버 블로그(blog.naver.com) URL인지 확인한다."""
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except ValueError:
+        return False
+
+    return host == "blog.naver.com" or host.endswith(".blog.naver.com")
+
+
 def _normalize_title_key(title: str) -> str:
     """중복 제거용 제목 정규화: 공백/기호 제거 + 소문자화."""
     return re.sub(r"[\s\W]+", "", title).lower()
@@ -513,8 +523,21 @@ def fetch_news_for_date(target_date: datetime, timeout: int = 20) -> list[dict]:
             total_queries += 1
             try:
                 results = _call_search_api(query, timeout=timeout)
-                raw_by_category[category].extend(
+                normalized_articles = [
                     _normalize_article(r, category) for r in results
+                ]
+                naver_blog_articles = [
+                    article for article in normalized_articles
+                    if _is_naver_blog_url(article["url"])
+                ]
+                if naver_blog_articles:
+                    print(
+                        f"[news_fetcher] 네이버 블로그 제외: "
+                        f"{len(naver_blog_articles)}건 (검색어: '{query}')"
+                    )
+                raw_by_category[category].extend(
+                    article for article in normalized_articles
+                    if not _is_naver_blog_url(article["url"])
                 )
             except NewsFetchError as exc:
                 failed_queries.append(query)
