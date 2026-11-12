@@ -135,8 +135,8 @@ main.container {
   align-items: center;
   gap: 14px;
   width: 100%;
-  min-height: 52px;
-  padding: 10px 22px;
+  min-height: 64px;
+  padding: 14px 22px;
   border: 0;
   background: #f1f4f8;
   color: var(--navy-900);
