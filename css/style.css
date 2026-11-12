@@ -115,55 +115,108 @@ main.container {
 /* -------------------- Index page: archive list -------------------- */
 
 .year-group {
-  margin-bottom: 32px;
+  margin-bottom: 16px;
+  overflow: hidden;
+  background: var(--white);
+  border: 1px solid var(--gray-300);
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(15, 33, 56, 0.04);
 }
 
 .year-heading {
-  font-size: 1.15rem;
-  font-weight: 700;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font-size: inherit;
+}
+
+.year-toggle {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  min-height: 64px;
+  padding: 14px 22px;
+  border: 0;
+  background: #f1f4f8;
   color: var(--navy-900);
-  margin: 0 0 12px;
-  padding-bottom: 8px;
-  border-bottom: 2px solid var(--navy-900);
+  font: inherit;
+  font-size: 1.25rem;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.12s ease;
+}
+
+.year-toggle[aria-expanded="true"] {
+  background: linear-gradient(110deg, var(--navy-900), var(--navy-800));
+  color: var(--white);
+}
+
+.year-toggle:hover {
+  filter: brightness(0.97);
+}
+
+.year-toggle:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: -3px;
+}
+
+.year-toggle-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.1em;
+  flex-shrink: 0;
+  font-size: 1.15em;
+  line-height: 1;
+}
+
+.year-label {
+  flex: 1;
+}
+
+.year-count {
+  flex-shrink: 0;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: inherit;
+  opacity: 0.88;
+}
+
+.year-content {
+  padding: 22px 24px 18px;
+}
+
+.year-content[hidden] {
+  display: none;
 }
 
 .month-group {
   margin-bottom: 20px;
 }
 
-.month-heading {
-  margin: 0 0 8px;
+.month-group:last-child {
+  margin-bottom: 0;
 }
 
-.month-toggle {
+.month-heading {
   display: flex;
   align-items: center;
-  gap: 6px;
-  width: 100%;
-  background: none;
-  border: none;
-  margin: 0;
-  padding: 2px;
-  font: inherit;
-  font-size: 0.95rem;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 10px;
+  padding-left: 12px;
+  border-left: 4px solid var(--navy-accent);
+  color: var(--navy-900);
+  font-size: 1rem;
   font-weight: 700;
-  color: var(--navy-700);
-  text-align: left;
-  cursor: pointer;
-  border-radius: var(--radius);
 }
 
-.month-toggle:hover,
-.month-toggle:focus-visible {
-  color: var(--navy-accent);
-}
-
-.month-toggle-icon {
-  display: inline-block;
-  width: 0.9em;
-  font-size: 0.75em;
+.month-count {
   color: var(--gray-500);
-  flex-shrink: 0;
+  font-size: 0.88rem;
+  font-weight: 500;
 }
 
 .date-list[hidden] {
@@ -173,10 +226,10 @@ main.container {
 .date-list {
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 0 0 0 12px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
 }
 
 .date-item a {
@@ -184,39 +237,41 @@ main.container {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 14px 16px;
+  padding: 11px 14px;
   background: var(--white);
-  border: 1px solid var(--gray-300);
-  border-left: 4px solid var(--navy-700);
-  border-radius: var(--radius);
+  border: 1px solid transparent;
+  border-bottom-color: var(--gray-300);
+  border-radius: 5px;
   text-decoration: none;
   color: var(--text-dark);
   font-weight: 600;
   font-size: 1rem;
   transition: background-color 0.12s ease, border-color 0.12s ease;
-  min-height: 44px;
+  min-height: 48px;
 }
 
 .date-item a:hover,
 .date-item a:focus-visible {
   background: var(--gray-100);
-  border-left-color: var(--navy-accent);
+  border-color: var(--gray-300);
 }
 
 .date-item--latest a {
-  border-left-color: var(--navy-accent);
+  margin: 0 0 2px;
   background: #eef3f9;
+  border-color: #a9c4e8;
+  color: var(--navy-900);
 }
 
 .latest-badge {
   flex-shrink: 0;
-  background: var(--navy-accent);
+  background: #5b8fd5;
   color: var(--white);
   font-size: 0.72rem;
   font-weight: 700;
-  padding: 3px 9px;
+  padding: 4px 10px;
   border-radius: 999px;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.01em;
 }
 
 #status-message {
