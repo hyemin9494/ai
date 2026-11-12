@@ -217,6 +217,32 @@ main.container {
   color: var(--gray-500);
   font-size: 0.88rem;
   font-weight: 500;
+  margin-left: auto;
+}
+
+.month-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 2px 4px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.month-toggle-icon {
+  display: inline-block;
+  width: 1.1em;
+  text-align: center;
+  line-height: 1;
+}
+
+.month-toggle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 .date-list[hidden] {
