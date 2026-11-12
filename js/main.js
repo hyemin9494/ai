@@ -53,10 +53,12 @@
   }
 
   function formatDateLabel(dateStr) {
-    // "2026-08-11" -> "08월 11일"
+    // "2026-08-11" -> "08월 11일 (화)"
     var parts = dateStr.split("-");
     if (parts.length !== 3) return dateStr;
-    return parts[1] + "월 " + parts[2] + "일";
+    var date = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+    var weekdays = ["일", "월", "화", "수", "목", "금", "토"];
+    return parts[1] + "월 " + parts[2] + "일 (" + weekdays[date.getDay()] + ")";
   }
 
   function formatYearMonth(dateStr) {
@@ -157,19 +159,47 @@
             var monthHeading = document.createElement("h3");
             monthHeading.className = "month-heading";
 
+            var monthPanelId = "archive-month-panel-" + yearEntry.year + "-" + monthEntry.month;
+            var isLatestMonth = monthEntry.dates.some(function (dateEntry) {
+              return dateEntry.isLatest;
+            });
+
+            var monthToggle = document.createElement("button");
+            monthToggle.className = "month-toggle";
+            monthToggle.type = "button";
+            monthToggle.setAttribute("aria-expanded", String(isLatestMonth));
+            monthToggle.setAttribute("aria-controls", monthPanelId);
+
+            var monthIcon = document.createElement("span");
+            monthIcon.className = "month-toggle-icon";
+            monthIcon.setAttribute("aria-hidden", "true");
+            monthIcon.textContent = isLatestMonth ? "⌃" : "⌄";
+
             var monthLabel = document.createElement("span");
+            monthLabel.className = "month-label";
             monthLabel.textContent = parseInt(monthEntry.month, 10) + "월";
 
             var monthCount = document.createElement("span");
             monthCount.className = "month-count";
             monthCount.textContent = "총 " + monthEntry.dates.length + "건";
 
-            monthHeading.appendChild(monthLabel);
-            monthHeading.appendChild(monthCount);
+            monthToggle.appendChild(monthIcon);
+            monthToggle.appendChild(monthLabel);
+            monthToggle.appendChild(monthCount);
+            monthHeading.appendChild(monthToggle);
             monthDiv.appendChild(monthHeading);
 
             var list = document.createElement("ul");
             list.className = "date-list";
+            list.id = monthPanelId;
+            list.hidden = !isLatestMonth;
+
+            monthToggle.addEventListener("click", function () {
+              var expanded = monthToggle.getAttribute("aria-expanded") === "true";
+              monthToggle.setAttribute("aria-expanded", String(!expanded));
+              list.hidden = expanded;
+              monthIcon.textContent = expanded ? "⌄" : "⌃";
+            });
 
             monthEntry.dates.forEach(function (d) {
               var li = document.createElement("li");
@@ -188,6 +218,12 @@
                 badge.textContent = "최신 보고서";
                 a.appendChild(badge);
               }
+
+              var dateArrow = document.createElement("span");
+              dateArrow.className = "date-item-arrow";
+              dateArrow.setAttribute("aria-hidden", "true");
+              dateArrow.textContent = ">";
+              a.appendChild(dateArrow);
 
               li.appendChild(a);
               list.appendChild(li);
