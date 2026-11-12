@@ -132,9 +132,9 @@
           }, 0);
           yearCount.textContent = "총 " + yearTotal + "건";
 
-          yearToggle.appendChild(yearIcon);
           yearToggle.appendChild(yearLabel);
           yearToggle.appendChild(yearCount);
+          yearToggle.appendChild(yearIcon);
           yearHeading.appendChild(yearToggle);
           yearSection.appendChild(yearHeading);
 
@@ -166,10 +166,29 @@
 
             monthHeading.appendChild(monthLabel);
             monthHeading.appendChild(monthCount);
+
+            var monthToggle = document.createElement("button");
+            monthToggle.className = "month-toggle";
+            monthToggle.type = "button";
+            monthToggle.setAttribute("aria-expanded", "true");
+
+            var monthIcon = document.createElement("span");
+            monthIcon.className = "month-toggle-icon";
+            monthIcon.setAttribute("aria-hidden", "true");
+            monthIcon.textContent = "⌃";
+            monthToggle.appendChild(monthIcon);
+            monthHeading.appendChild(monthToggle);
             monthDiv.appendChild(monthHeading);
 
             var list = document.createElement("ul");
             list.className = "date-list";
+
+            monthToggle.addEventListener("click", function () {
+              var expanded = monthToggle.getAttribute("aria-expanded") === "true";
+              monthToggle.setAttribute("aria-expanded", String(!expanded));
+              list.hidden = expanded;
+              monthIcon.textContent = expanded ? "⌄" : "⌃";
+            });
 
             monthEntry.dates.forEach(function (d) {
               var li = document.createElement("li");
