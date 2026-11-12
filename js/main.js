@@ -100,14 +100,55 @@
 
         var frag = document.createDocumentFragment();
 
-        years.forEach(function (yearEntry) {
+        years.forEach(function (yearEntry, yearIndex) {
           var yearSection = document.createElement("section");
           yearSection.className = "year-group";
 
+          var yearPanelId = "archive-year-panel-" + yearEntry.year + "-" + yearIndex;
+          var isCurrentYear = yearIndex === 0;
+
           var yearHeading = document.createElement("h2");
           yearHeading.className = "year-heading";
-          yearHeading.textContent = yearEntry.year + "년";
+
+          var yearToggle = document.createElement("button");
+          yearToggle.className = "year-toggle";
+          yearToggle.type = "button";
+          yearToggle.setAttribute("aria-expanded", String(isCurrentYear));
+          yearToggle.setAttribute("aria-controls", yearPanelId);
+
+          var yearIcon = document.createElement("span");
+          yearIcon.className = "year-toggle-icon";
+          yearIcon.setAttribute("aria-hidden", "true");
+          yearIcon.textContent = isCurrentYear ? "⌃" : "⌄";
+
+          var yearLabel = document.createElement("span");
+          yearLabel.className = "year-label";
+          yearLabel.textContent = yearEntry.year + "년";
+
+          var yearCount = document.createElement("span");
+          yearCount.className = "year-count";
+          var yearTotal = yearEntry.months.reduce(function (sum, month) {
+            return sum + month.dates.length;
+          }, 0);
+          yearCount.textContent = "총 " + yearTotal + "건";
+
+          yearToggle.appendChild(yearIcon);
+          yearToggle.appendChild(yearLabel);
+          yearToggle.appendChild(yearCount);
+          yearHeading.appendChild(yearToggle);
           yearSection.appendChild(yearHeading);
+
+          var yearPanel = document.createElement("div");
+          yearPanel.className = "year-content";
+          yearPanel.id = yearPanelId;
+          yearPanel.hidden = !isCurrentYear;
+
+          yearToggle.addEventListener("click", function () {
+            var expanded = yearToggle.getAttribute("aria-expanded") === "true";
+            yearToggle.setAttribute("aria-expanded", String(!expanded));
+            yearPanel.hidden = expanded;
+            yearIcon.textContent = expanded ? "⌄" : "⌃";
+          });
 
           yearEntry.months.forEach(function (monthEntry) {
             var monthDiv = document.createElement("div");
@@ -115,7 +156,16 @@
 
             var monthHeading = document.createElement("h3");
             monthHeading.className = "month-heading";
-            monthHeading.textContent = parseInt(monthEntry.month, 10) + "월";
+
+            var monthLabel = document.createElement("span");
+            monthLabel.textContent = parseInt(monthEntry.month, 10) + "월";
+
+            var monthCount = document.createElement("span");
+            monthCount.className = "month-count";
+            monthCount.textContent = "총 " + monthEntry.dates.length + "건";
+
+            monthHeading.appendChild(monthLabel);
+            monthHeading.appendChild(monthCount);
             monthDiv.appendChild(monthHeading);
 
             var list = document.createElement("ul");
@@ -135,7 +185,7 @@
               if (d.isLatest) {
                 var badge = document.createElement("span");
                 badge.className = "latest-badge";
-                badge.textContent = "최신";
+                badge.textContent = "최신 보고서";
                 a.appendChild(badge);
               }
 
@@ -144,9 +194,10 @@
             });
 
             monthDiv.appendChild(list);
-            yearSection.appendChild(monthDiv);
+            yearPanel.appendChild(monthDiv);
           });
 
+          yearSection.appendChild(yearPanel);
           frag.appendChild(yearSection);
         });
 
