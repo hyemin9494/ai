@@ -134,15 +134,7 @@
           yearLabel.className = "year-label";
           yearLabel.textContent = yearEntry.year + "년";
 
-          var yearCount = document.createElement("span");
-          yearCount.className = "year-count";
-          var yearTotal = yearEntry.months.reduce(function (sum, month) {
-            return sum + month.dates.length;
-          }, 0);
-          yearCount.textContent = "총 " + yearTotal + "건";
-
           yearToggle.appendChild(yearLabel);
-          yearToggle.appendChild(yearCount);
           yearToggle.appendChild(yearIcon);
           yearHeading.appendChild(yearToggle);
           yearSection.appendChild(yearHeading);
@@ -169,12 +161,7 @@
             var monthLabel = document.createElement("span");
             monthLabel.textContent = parseInt(monthEntry.month, 10) + "월";
 
-            var monthCount = document.createElement("span");
-            monthCount.className = "month-count";
-            monthCount.textContent = "총 " + monthEntry.dates.length + "건";
-
             monthHeading.appendChild(monthLabel);
-            monthHeading.appendChild(monthCount);
 
             var isLatestMonth = monthEntry.dates.some(function (d) {
               return d.isLatest;
