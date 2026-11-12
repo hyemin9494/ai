@@ -53,10 +53,19 @@
   }
 
   function formatDateLabel(dateStr) {
-    // "2026-08-11" -> "08월 11일"
+    // "2026-08-11" -> "08월 11일 (화)"
     var parts = dateStr.split("-");
     if (parts.length !== 3) return dateStr;
-    return parts[1] + "월 " + parts[2] + "일";
+
+    var date = new Date(
+      Number(parts[0]),
+      Number(parts[1]) - 1,
+      Number(parts[2])
+    );
+    var weekdays = ["일", "월", "화", "수", "목", "금", "토"];
+
+    return parts[1] + "월 " + parts[2] + "일 (" +
+      weekdays[date.getDay()] + ")";
   }
 
   function formatYearMonth(dateStr) {
