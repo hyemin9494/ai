@@ -158,11 +158,6 @@
             var monthHeading = document.createElement("h3");
             monthHeading.className = "month-heading";
 
-            var monthLabel = document.createElement("span");
-            monthLabel.textContent = parseInt(monthEntry.month, 10) + "월";
-
-            monthHeading.appendChild(monthLabel);
-
             var isLatestMonth = monthEntry.dates.some(function (d) {
               return d.isLatest;
             });
@@ -172,10 +167,16 @@
             monthToggle.type = "button";
             monthToggle.setAttribute("aria-expanded", String(isLatestMonth));
 
+            var monthLabel = document.createElement("span");
+            monthLabel.className = "month-label";
+            monthLabel.textContent = parseInt(monthEntry.month, 10) + "월";
+
             var monthIcon = document.createElement("span");
             monthIcon.className = "month-toggle-icon";
             monthIcon.setAttribute("aria-hidden", "true");
             monthIcon.textContent = isLatestMonth ? "⌃" : "⌄";
+
+            monthToggle.appendChild(monthLabel);
             monthToggle.appendChild(monthIcon);
             monthHeading.appendChild(monthToggle);
             monthDiv.appendChild(monthHeading);
