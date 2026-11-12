@@ -201,16 +201,48 @@ main.container {
 }
 
 .month-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
   margin: 0 0 10px;
   padding-left: 12px;
   border-left: 4px solid var(--navy-accent);
-  color: var(--navy-900);
   font-size: 1rem;
   font-weight: 700;
+}
+
+.month-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--navy-900);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.month-toggle:hover,
+.month-toggle:focus-visible {
+  color: var(--navy-accent);
+}
+
+.month-toggle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 3px;
+}
+
+.month-toggle-icon {
+  display: inline-flex;
+  justify-content: center;
+  width: 1em;
+  flex-shrink: 0;
+  color: var(--gray-500);
+  font-size: 0.85em;
+}
+
+.month-label {
+  flex: 1;
 }
 
 .month-count {
@@ -248,6 +280,15 @@ main.container {
   font-size: 1rem;
   transition: background-color 0.12s ease, border-color 0.12s ease;
   min-height: 48px;
+}
+
+.date-item-arrow {
+  flex-shrink: 0;
+  margin-left: 2px;
+  color: var(--gray-500);
+  font-size: 1.05rem;
+  font-weight: 500;
+  line-height: 1;
 }
 
 .date-item a:hover,
