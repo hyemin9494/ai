@@ -167,21 +167,26 @@
             monthHeading.appendChild(monthLabel);
             monthHeading.appendChild(monthCount);
 
+            var isLatestMonth = monthEntry.dates.some(function (d) {
+              return d.isLatest;
+            });
+
             var monthToggle = document.createElement("button");
             monthToggle.className = "month-toggle";
             monthToggle.type = "button";
-            monthToggle.setAttribute("aria-expanded", "true");
+            monthToggle.setAttribute("aria-expanded", String(isLatestMonth));
 
             var monthIcon = document.createElement("span");
             monthIcon.className = "month-toggle-icon";
             monthIcon.setAttribute("aria-hidden", "true");
-            monthIcon.textContent = "⌃";
+            monthIcon.textContent = isLatestMonth ? "⌃" : "⌄";
             monthToggle.appendChild(monthIcon);
             monthHeading.appendChild(monthToggle);
             monthDiv.appendChild(monthHeading);
 
             var list = document.createElement("ul");
             list.className = "date-list";
+            list.hidden = !isLatestMonth;
 
             monthToggle.addEventListener("click", function () {
               var expanded = monthToggle.getAttribute("aria-expanded") === "true";
